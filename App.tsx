@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Audio } from 'expo-av';
+import { Audio, AVPlaybackStatus } from 'expo-av';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
 import { Message, Voice } from './src/types';
@@ -13,11 +13,11 @@ export default function App() {
   const [lastMessages, setLastMessages] = useState<Map<string, string>>(new Map());
   const [ttsReady, setTtsReady] = useState(false);
   const [ttsLoading, setTtsLoading] = useState('Loading TTS engine...');
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   
   const ttsRef = useRef<TextToSpeech | null>(null);
   const voiceStylesRef = useRef<Map<string, Style>>(new Map());
   const soundRef = useRef<Audio.Sound | null>(null);
-  const playingMessageIdRef = useRef<string | null>(null);
 
   // Initialize TTS engine
   useEffect(() => {
@@ -60,7 +60,7 @@ export default function App() {
     if (!selectedVoice) return;
 
     const userMessage: Message = {
-      id: \`user_\${Date.now()}\`,
+      id: `user_${Date.now()}`,
       role: 'user',
       text,
       status: 'done',
@@ -68,7 +68,7 @@ export default function App() {
     };
 
     const assistantMessage: Message = {
-      id: \`assistant_\${Date.now()}\`,
+      id: `assistant_${Date.now()}`,
       role: 'assistant',
       text,
       status: 'pending',
@@ -80,7 +80,7 @@ export default function App() {
       [selectedVoice.id]: [...(prev[selectedVoice.id] || []), userMessage, assistantMessage],
     }));
 
-    // Generate TTS
+    // Generate TTS in background
     const generateTTS = async () => {
       const tts = ttsRef.current;
       const style = voiceStylesRef.current.get(selectedVoice.id);
@@ -100,11 +100,9 @@ export default function App() {
         
         // Write WAV file to cache
         const wavBuffer = writeWavFile(wav, tts.sampleRate);
-        const fileUri = \`\${FileSystem.cacheDirectory}tts_\${Date.now()}.wav\`;
-        await FileSystem.writeAsStringAsync(fileUri, 
-          Array.from(new Uint8Array(wavBuffer)).map(b => String.fromCharCode(b)).join(''),
-          { encoding: FileSystem.EncodingType.Base64 }
-        );
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
+        const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
+        await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
         
         setAllMessages(prev => ({
           ...prev,
@@ -144,11 +142,9 @@ export default function App() {
     try {
       const { wav } = await tts.call(message.text, 'en', style, 8, 1.05, 0.3);
       const wavBuffer = writeWavFile(wav, tts.sampleRate);
-      const fileUri = \`\${FileSystem.cacheDirectory}tts_\${Date.now()}.wav\`;
-      await FileSystem.writeAsStringAsync(fileUri, 
-        Array.from(new Uint8Array(wavBuffer)).map(b => String.fromCharCode(b)).join(''),
-        { encoding: FileSystem.EncodingType.Base64 }
-      );
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
+      const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
+      await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
       
       setAllMessages(prev => ({
         ...prev,
@@ -178,66 +174,35 @@ export default function App() {
   const handlePlayAudio = useCallback(async (messageId: string, audioUri?: string) => {
     if (!audioUri) return;
     
-    try {
-      // If same message is playing, stop it
-      if (playingMessageIdRef.current === messageId && soundRef.current) {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-        playingMessageIdRef.current = null;
-        // Update message status to 'done'
-        if (selectedVoice) {
-          setAllMessages(prev => ({
-            ...prev,
-            [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-              msg.id === messageId ? { ...msg, status: 'done' } : msg
-            ),
-          }));
-        }
-        return;
-      }
-      
-      // Stop any currently playing sound
-      if (soundRef.current) {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-      }
-      
-      // Load and play new sound
-      const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
-      soundRef.current = sound;
-      playingMessageIdRef.current = messageId;
-      
-      // Update message status to 'playing'
-      if (selectedVoice) {
-        setAllMessages(prev => ({
-          ...prev,
-          [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-            msg.id === messageId ? { ...msg, status: 'playing' } : msg
-          ),
-        }));
-      }
-      
-      await sound.playAsync();
-      
-      // When playback finishes
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          playingMessageIdRef.current = null;
-          if (selectedVoice) {
-            setAllMessages(prev => ({
-              ...prev,
-              [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-                msg.id === messageId ? { ...msg, status: 'done' } : msg
-              ),
-            }));
-          }
-        }
-      });
-    } catch (error) {
-      console.error('Audio playback error:', error);
+    // If same message is playing, stop it
+    if (currentlyPlayingId === messageId && soundRef.current) {
+      await soundRef.current.stopAsync();
+      await soundRef.current.unloadAsync();
+      soundRef.current = null;
+      setCurrentlyPlayingId(null);
+      return;
     }
-  }, [selectedVoice]);
+    
+    // Stop any currently playing sound
+    if (soundRef.current) {
+      await soundRef.current.stopAsync();
+      await soundRef.current.unloadAsync();
+    }
+    
+    // Load and play new sound
+    const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
+    soundRef.current = sound;
+    setCurrentlyPlayingId(messageId);
+    
+    await sound.playAsync();
+    
+    // When playback finishes, reset state
+    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+      if (status.isLoaded && status.didJustFinish) {
+        setCurrentlyPlayingId(null);
+      }
+    });
+  }, [currentlyPlayingId]);
 
   // Cleanup audio on unmount
   useEffect(() => {
@@ -263,7 +228,10 @@ export default function App() {
     return (
       <ChatScreen
         voice={selectedVoice}
-        messages={allMessages[selectedVoice.id] || []}
+        messages={(allMessages[selectedVoice.id] || []).map(msg => ({
+          ...msg,
+          status: msg.id === currentlyPlayingId ? 'playing' : msg.status,
+        }))}
         onSendMessage={handleSendMessage}
         onRetry={handleRetry}
         onUpdateLastMessage={handleUpdateLastMessage}

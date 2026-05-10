@@ -23,6 +23,7 @@ interface ChatScreenProps {
   onRetry: (message: Message) => void;
   onUpdateLastMessage: (text: string) => void;
   onBack: () => void;
+  onPlayAudio: (messageId: string, audioUri?: string) => void;
 }
 
 export const ChatScreen: React.FC<ChatScreenProps> = ({
@@ -32,8 +33,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   onRetry,
   onUpdateLastMessage,
   onBack,
+  onPlayAudio,
 }) => {
-  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const flatListRef = useRef<FlatList>(null);
@@ -54,21 +55,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     }
   };
 
-  const handleSendMessage = (text: string) => {
+  const handleSend = (text: string) => {
     onUpdateLastMessage(text);
     onSendMessage(text);
     scrollToBottom();
-  };
-
-  const handlePlayAudio = (message: Message) => {
-    if (currentlyPlayingId === message.id) {
-      setCurrentlyPlayingId(null);
-    } else {
-      setCurrentlyPlayingId(message.id);
-      setTimeout(() => {
-        setCurrentlyPlayingId(null);
-      }, 3000);
-    }
   };
 
   const handleRetry = (message: Message) => {
@@ -83,17 +73,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
     setMenuVisible(false);
     setSelectedMessage(null);
   };
-
-  const renderMessage = ({ item }: { item: Message }) => (
-    <ChatMessage
-      message={{
-        ...item,
-        status: item.id === currentlyPlayingId ? 'playing' : item.status,
-      }}
-      onRetry={handleRetry}
-      onPlayAudio={handlePlayAudio}
-    />
-  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -117,7 +96,13 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       <FlatList
         ref={flatListRef}
         data={messages}
-        renderItem={renderMessage}
+        renderItem={({ item }) => (
+          <ChatMessage
+            message={item}
+            onPlayAudio={onPlayAudio}
+            onRetry={handleRetry}
+          />
+        )}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.chatContainer}
         onContentSizeChange={scrollToBottom}
@@ -131,7 +116,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
       />
 
       {/* Input */}
-      <ChatInput onSendMessage={handleSendMessage} />
+      <ChatInput onSendMessage={handleSend} />
 
       {/* Retry Modal */}
       <Modal

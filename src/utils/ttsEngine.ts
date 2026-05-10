@@ -1,6 +1,4 @@
 import * as ort from 'onnxruntime-react-native';
-import { require } from 'react-native';
-
 // Available languages
 export const AVAILABLE_LANGS = [
   'en', 'ko', 'ja', 'ar', 'bg', 'cs', 'da', 'de', 'el', 'es',
