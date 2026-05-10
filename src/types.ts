@@ -12,10 +12,3 @@ export interface Voice {
   name: string;
   gender: 'male' | 'female';
 }
-
-export interface ChatPreview {
-  voice: Voice;
-  lastMessage: string;
-  lastTimestamp: Date;
-  unread: number;
-}

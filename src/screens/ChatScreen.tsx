@@ -1,14 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  Animated,
   FlatList,
   SafeAreaView,
   StatusBar,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { Avatar } from '../components/Avatar';
 import { ChatMessage } from '../components/ChatMessage';
@@ -37,6 +37,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const [menuVisible, setMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const flatListRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      onBack();
+      return true;
+    });
+    return () => backHandler.remove();
+  }, [onBack]);
 
   const scrollToBottom = () => {
     if (messages.length > 0) {

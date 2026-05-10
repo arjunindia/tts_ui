@@ -1,296 +1,283 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Animated,
+  Modal,
+  Image,
 } from 'react-native';
 import { Message } from '../types';
-import { pinterestColors, pinterestRounded, pinterestSpacing } from '../theme/pinterest';
+import { pinterestColors, pinterestSpacing, pinterestRounded } from '../theme/pinterest';
+import { Avatar } from './Avatar';
 
 interface ChatMessageProps {
   message: Message;
+  onPlayAudio: (messageId: string, audioUri?: string) => void;
   onRetry: (message: Message) => void;
-  onPlayAudio: (message: Message) => void;
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({
-  message,
-  onRetry,
-  onPlayAudio,
-}) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+export function ChatMessage({ message, onPlayAudio, onRetry }: ChatMessageProps) {
+  const [showRetryModal, setShowRetryModal] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isLongPress = useRef(false);
 
   const isUser = message.role === 'user';
-  const isPlaying = message.status === 'playing';
-  const isLoading = message.status === 'pending';
-  const hasError = message.status === 'error';
+  const isPending = message.status === 'pending';
+  const isError = message.status === 'error';
+  const isDone = message.status === 'done';
+  const isPlayingStatus = message.status === 'playing';
 
   const handlePress = () => {
-    if (!isUser && !isLoading && !hasError) {
-      onPlayAudio(message);
+    if (isLongPress.current) {
+      isLongPress.current = false;
+      return;
+    }
+    
+    if (isUser || isPending || isError) return;
+    
+    setIsPlaying(!isPlaying);
+    onPlayAudio(message.id, message.audioUri);
+  };
+
+  const handlePressIn = () => {
+    isLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+      isLongPress.current = true;
+      setShowRetryModal(true);
+    }, 500);
+  };
+
+  const handlePressOut = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
     }
   };
 
-  const handleLongPress = () => {
-    Animated.sequence([
-      Animated.timing(scaleAnim, {
-        toValue: 0.96,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      onRetry(message);
-    });
+  const handleRetry = () => {
+    setShowRetryModal(false);
+    onRetry(message);
   };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const renderUserMessage = () => (
-    <View style={[styles.messageBubble, styles.userBubble]}>
-      <Text style={styles.messageText}>{message.text}</Text>
-      <Text style={styles.timestamp}>{formatTime(message.timestamp)}</Text>
-    </View>
-  );
-
-  const renderAssistantMessage = () => (
-    <View style={[styles.messageBubble, styles.assistantBubble]}>
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Generating audio...</Text>
-          <View style={styles.loadingDots}>
-            <View style={[styles.dot, styles.dotActive]} />
-            <View style={[styles.dot, styles.dotActive, styles.dotDelay1]} />
-            <View style={[styles.dot, styles.dotActive, styles.dotDelay2]} />
-          </View>
-        </View>
-      ) : hasError ? (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorIcon}>!</Text>
-          <Text style={styles.errorText}>Failed to generate</Text>
-          <TouchableOpacity style={styles.errorRetry} onPress={() => onRetry(message)}>
-            <Text style={styles.errorRetryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <TouchableOpacity
-          style={styles.playButton}
-          onPress={handlePress}
-          onLongPress={handleLongPress}
-          activeOpacity={0.8}
-        >
-          <View style={[styles.playIcon, isPlaying && styles.pauseIcon]}>
-            {isPlaying ? (
-              <View style={styles.pauseBars}>
-                <View style={styles.pauseBar} />
-                <View style={styles.pauseBar} />
-              </View>
-            ) : (
-              <View style={styles.playTriangle} />
-            )}
-          </View>
-          <View style={styles.waveformContainer}>
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
-              <View
-                key={i}
-                style={[
-                  styles.waveformBar,
-                  isPlaying && styles.waveformBarActive,
-                ]}
-              />
-            ))}
-          </View>
-          <Text style={styles.voiceLabel}>Voice</Text>
-        </TouchableOpacity>
-      )}
-      <Text style={[styles.timestamp, styles.assistantTimestamp]}>
-        {formatTime(message.timestamp)}
-      </Text>
-    </View>
-  );
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        isUser ? styles.userContainer : styles.assistantContainer,
-        { transform: [{ scale: scaleAnim }] },
-      ]}
-    >
-      {isUser ? renderUserMessage() : renderAssistantMessage()}
-    </Animated.View>
+    <>
+      <View style={[styles.container, isUser ? styles.userContainer : styles.assistantContainer]}>
+        {!isUser && (
+          <View style={styles.avatarWrapper}>
+            <Avatar voice={{ id: message.id, name: 'Voice', gender: 'female' }} size={32} />
+          </View>
+        )}
+        
+        <TouchableOpacity
+          style={[
+            styles.bubble,
+            isUser ? styles.userBubble : styles.assistantBubble,
+            isDone && message.audioUri ? styles.voiceBubble : null,
+          ]}
+          onPress={handlePress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          activeOpacity={0.8}
+          disabled={isUser}
+        >
+          {isUser ? (
+            <Text style={styles.userText}>{message.text}</Text>
+          ) : isPending ? (
+            <View style={styles.pendingContainer}>
+              <Text style={styles.pendingText}>Generating audio...</Text>
+            </View>
+          ) : isError ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorIcon}>⚠️</Text>
+              <Text style={styles.errorText}>Failed to generate</Text>
+            </View>
+          ) : (
+            <View style={styles.voicePlayerContainer}>
+              <View style={styles.voicePlayerLeft}>
+                <TouchableOpacity style={styles.playButton}>
+                  <Text style={styles.playIcon}>{isPlayingStatus ? '⏸' : '▶'}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.voicePlayerCenter}>
+                <View style={styles.waveformContainer}>
+                  {[...Array(20)].map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.waveformBar,
+                        { height: Math.random() * 16 + 8 }
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+              <View style={styles.voicePlayerRight}>
+                <Text style={styles.voiceDuration}>
+                  {isPlayingStatus ? 'Playing' : 'Tap to play'}
+                </Text>
+              </View>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <Modal
+        visible={showRetryModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowRetryModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowRetryModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <TouchableOpacity style={styles.modalButton} onPress={handleRetry}>
+              <Text style={styles.modalButtonText}>🔄 Retry</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.modalButton, styles.modalButtonCancel]} 
+              onPress={() => setShowRetryModal(false)}
+            >
+              <Text style={styles.modalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
+    flexDirection: 'row',
     marginVertical: pinterestSpacing.xs,
     paddingHorizontal: pinterestSpacing.lg,
   },
   userContainer: {
-    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
   },
   assistantContainer: {
-    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
   },
-  messageBubble: {
-    maxWidth: '82%',
-    padding: pinterestSpacing.md,
-    borderRadius: pinterestRounded.lg,
+  avatarWrapper: {
+    marginRight: pinterestSpacing.sm,
+    alignSelf: 'flex-end',
+  },
+  bubble: {
+    maxWidth: '80%',
+    padding: pinterestSpacing.lg,
+    borderRadius: pinterestRounded.md,
   },
   userBubble: {
     backgroundColor: pinterestColors.primary,
-    borderBottomRightRadius: pinterestSpacing.xs,
+    borderBottomRightRadius: pinterestRounded.xs,
   },
   assistantBubble: {
-    backgroundColor: pinterestColors['surface-card'],
-    borderBottomLeftRadius: pinterestSpacing.xs,
-    minWidth: 220,
+    backgroundColor: pinterestColors.fill,
+    borderBottomLeftRadius: pinterestRounded.xs,
   },
-  messageText: {
+  voiceBubble: {
+    backgroundColor: pinterestColors.fill,
+  },
+  userText: {
+    color: pinterestColors.onPrimary,
     fontSize: 16,
-    color: pinterestColors['on-primary'],
     lineHeight: 22,
   },
-  timestamp: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.6)',
-    marginTop: pinterestSpacing.xxs,
-    alignSelf: 'flex-end',
-  },
-  assistantTimestamp: {
-    color: pinterestColors.ash,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    padding: pinterestSpacing.lg,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: pinterestColors.mute,
-    marginBottom: pinterestSpacing.md,
-  },
-  loadingDots: {
+  pendingContainer: {
     flexDirection: 'row',
-    gap: 6,
+    alignItems: 'center',
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: pinterestColors.stone,
-  },
-  dotActive: {
-    backgroundColor: pinterestColors.primary,
-  },
-  dotDelay1: {
-    opacity: 0.6,
-  },
-  dotDelay2: {
-    opacity: 0.3,
+  pendingText: {
+    color: pinterestColors.mute,
+    fontSize: 14,
+    fontStyle: 'italic',
   },
   errorContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    padding: pinterestSpacing.md,
   },
   errorIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: pinterestColors.error,
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-    lineHeight: 32,
-    marginBottom: pinterestSpacing.sm,
+    fontSize: 16,
+    marginRight: pinterestSpacing.sm,
   },
   errorText: {
+    color: pinterestColors.destructive,
     fontSize: 14,
-    color: pinterestColors.body,
-    marginBottom: pinterestSpacing.md,
   },
-  errorRetry: {
-    backgroundColor: pinterestColors.primary,
-    paddingHorizontal: pinterestSpacing.lg,
-    paddingVertical: pinterestSpacing.sm,
-    borderRadius: pinterestRounded.full,
-  },
-  errorRetryText: {
-    color: pinterestColors['on-primary'],
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  playButton: {
+  voicePlayerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: pinterestSpacing.sm,
-    backgroundColor: pinterestColors.canvas,
-    borderRadius: pinterestRounded.md,
     minWidth: 200,
   },
-  playIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: pinterestColors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  voicePlayerLeft: {
     marginRight: pinterestSpacing.md,
   },
-  pauseIcon: {
-    backgroundColor: pinterestColors.error,
+  playButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: pinterestColors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  playTriangle: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 12,
-    borderTopWidth: 8,
-    borderBottomWidth: 8,
-    borderLeftColor: '#fff',
-    borderTopColor: 'transparent',
-    borderBottomColor: 'transparent',
-    marginLeft: 4,
+  playIcon: {
+    color: pinterestColors.onPrimary,
+    fontSize: 16,
   },
-  pauseBars: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  pauseBar: {
-    width: 5,
-    height: 16,
-    backgroundColor: '#fff',
-    borderRadius: 2,
+  voicePlayerCenter: {
+    flex: 1,
+    height: 32,
+    justifyContent: 'center',
   },
   waveformContainer: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    height: 28,
-    gap: 3,
+    justifyContent: 'space-between',
+    height: 32,
   },
   waveformBar: {
     width: 3,
-    backgroundColor: pinterestColors.stone,
+    backgroundColor: pinterestColors.mute,
     borderRadius: 2,
-    height: 10,
   },
-  waveformBarActive: {
-    backgroundColor: pinterestColors.primary,
-    height: 18,
+  voicePlayerRight: {
+    marginLeft: pinterestSpacing.md,
   },
-  voiceLabel: {
+  voiceDuration: {
     fontSize: 12,
     color: pinterestColors.mute,
-    marginLeft: pinterestSpacing.sm,
-    fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: pinterestColors.surface,
+    borderRadius: pinterestRounded.lg,
+    padding: pinterestSpacing.md,
+    minWidth: 200,
+  },
+  modalButton: {
+    paddingVertical: pinterestSpacing.md,
+    paddingHorizontal: pinterestSpacing.xl,
+    borderRadius: pinterestRounded.md,
+    alignItems: 'center',
+  },
+  modalButtonCancel: {
+    marginTop: pinterestSpacing.sm,
+    backgroundColor: pinterestColors.fill,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: pinterestColors.ink,
   },
 });

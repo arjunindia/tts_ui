@@ -81,15 +81,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={pinterestColors.canvas} />
+      <View style={styles.statusBarSpacer} />
       
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
         <Text style={styles.headerSubtitle}>{VOICES.length} voices available</Text>
-      </View>
-
-      <View style={styles.searchBar}>
-        <Text style={styles.searchIcon}>🔍</Text>
-        <Text style={styles.searchPlaceholder}>Search voices...</Text>
       </View>
 
       <FlatList
@@ -107,10 +103,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: pinterestColors.canvas,
   },
+  statusBarSpacer: {
+    height: 0,
+  },
   header: {
     paddingHorizontal: pinterestSpacing.lg,
-    paddingTop: pinterestSpacing.lg,
-    paddingBottom: pinterestSpacing.sm,
+    paddingTop: pinterestSpacing.sm,
+    paddingBottom: pinterestSpacing.xs,
   },
   headerTitle: {
     fontSize: 32,
@@ -122,24 +121,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: pinterestColors.mute,
     marginTop: pinterestSpacing.xxs,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: pinterestColors['surface-card'],
-    borderRadius: pinterestRounded.full,
-    paddingHorizontal: pinterestSpacing.lg,
-    paddingVertical: pinterestSpacing.md,
-    marginHorizontal: pinterestSpacing.lg,
-    marginBottom: pinterestSpacing.md,
-  },
-  searchIcon: {
-    fontSize: 16,
-    marginRight: pinterestSpacing.sm,
-  },
-  searchPlaceholder: {
-    fontSize: 16,
-    color: pinterestColors.ash,
+    paddingBottom: pinterestSpacing.sm,
   },
   listContent: {
     paddingBottom: pinterestSpacing.section,
