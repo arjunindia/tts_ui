@@ -6,6 +6,15 @@ import { Message, Voice } from './src/types';
 import { initTTS, getTTS, loadVoiceStyle, writeWavFile, TTS_BASE_PATH, TextToSpeech, Style } from './src/utils/ttsEngine';
 import * as FileSystem from 'expo-file-system';
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'home' | 'chat'>('home');
   const [selectedVoice, setSelectedVoice] = useState<Voice | null>(null);
@@ -96,11 +105,11 @@ export default function App() {
       }
 
       try {
-        const { wav, duration } = await tts.call(text, 'en', style, 8, 1.05, 0.3);
+        const { wav } = await tts.call(text, 'en', style, 8, 1.05, 0.3);
         
         // Write WAV file to cache
         const wavBuffer = writeWavFile(wav, tts.sampleRate);
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
+        const base64 = arrayBufferToBase64(wavBuffer);
         const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
         await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
         
@@ -142,7 +151,7 @@ export default function App() {
     try {
       const { wav } = await tts.call(message.text, 'en', style, 8, 1.05, 0.3);
       const wavBuffer = writeWavFile(wav, tts.sampleRate);
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(wavBuffer)));
+      const base64 = arrayBufferToBase64(wavBuffer);
       const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
       await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
       
@@ -190,18 +199,23 @@ export default function App() {
     }
     
     // Load and play new sound
-    const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
-    soundRef.current = sound;
-    setCurrentlyPlayingId(messageId);
-    
-    await sound.playAsync();
-    
-    // When playback finishes, reset state
-    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-      if (status.isLoaded && status.didJustFinish) {
-        setCurrentlyPlayingId(null);
-      }
-    });
+    try {
+      const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
+      soundRef.current = sound;
+      setCurrentlyPlayingId(messageId);
+      
+      await sound.playAsync();
+      
+      // When playback finishes, reset state
+      sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setCurrentlyPlayingId(null);
+        }
+      });
+    } catch (error) {
+      console.error('Audio playback error:', error);
+      setCurrentlyPlayingId(null);
+    }
   }, [currentlyPlayingId]);
 
   // Cleanup audio on unmount

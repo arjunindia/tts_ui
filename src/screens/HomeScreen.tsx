@@ -11,16 +11,18 @@ import {
 import { Avatar } from '../components/Avatar';
 import { Voice } from '../types';
 import { VOICES } from '../data/voices';
-import { pinterestColors, pinterestRounded, pinterestSpacing } from '../theme/pinterest';
+import { pinterestColors, pinterestSpacing } from '../theme/pinterest';
 
 interface HomeScreenProps {
   onSelectChat: (voice: Voice) => void;
   lastMessages: Map<string, string>;
+  loadingMessage?: string;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectChat,
   lastMessages,
+  loadingMessage,
 }) => {
   const maleVoices = VOICES.filter(v => v.gender === 'male');
   const femaleVoices = VOICES.filter(v => v.gender === 'female');
@@ -81,19 +83,24 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={pinterestColors.canvas} />
-      <View style={styles.statusBarSpacer} />
-      
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
         <Text style={styles.headerSubtitle}>{VOICES.length} voices available</Text>
       </View>
 
-      <FlatList
-        data={[]}
-        renderItem={null}
-        ListHeaderComponent={renderContent}
-        contentContainerStyle={styles.listContent}
-      />
+      {loadingMessage ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>{loadingMessage}</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={[]}
+          renderItem={null}
+          ListHeaderComponent={renderContent}
+          contentContainerStyle={styles.listContent}
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -103,12 +110,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: pinterestColors.canvas,
   },
-  statusBarSpacer: {
-    height: 0,
-  },
   header: {
     paddingHorizontal: pinterestSpacing.lg,
-    paddingTop: pinterestSpacing.sm,
+    paddingTop: pinterestSpacing.lg,
     paddingBottom: pinterestSpacing.xs,
   },
   headerTitle: {
@@ -169,5 +173,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: pinterestColors.mute,
     lineHeight: 18,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: pinterestColors.mute,
   },
 });

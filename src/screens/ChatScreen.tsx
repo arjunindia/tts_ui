@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   menuContainer: {
-    backgroundColor: pinterestColors.canvas,
+    backgroundColor: pinterestColors.surface,
     borderRadius: pinterestRounded.lg,
     padding: pinterestSpacing.sm,
     minWidth: 200,

@@ -4,13 +4,10 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Animated,
   Modal,
-  Image,
 } from 'react-native';
 import { Message } from '../types';
 import { pinterestColors, pinterestSpacing, pinterestRounded } from '../theme/pinterest';
-import { Avatar } from './Avatar';
 
 interface ChatMessageProps {
   message: Message;
@@ -20,15 +17,14 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message, onPlayAudio, onRetry }: ChatMessageProps) {
   const [showRetryModal, setShowRetryModal] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLongPress = useRef(false);
 
   const isUser = message.role === 'user';
   const isPending = message.status === 'pending';
   const isError = message.status === 'error';
+  const isPlaying = message.status === 'playing';
   const isDone = message.status === 'done';
-  const isPlayingStatus = message.status === 'playing';
 
   const handlePress = () => {
     if (isLongPress.current) {
@@ -37,8 +33,8 @@ export function ChatMessage({ message, onPlayAudio, onRetry }: ChatMessageProps)
     }
     
     if (isUser || isPending || isError) return;
+    if (!message.audioUri) return;
     
-    setIsPlaying(!isPlaying);
     onPlayAudio(message.id, message.audioUri);
   };
 
@@ -65,63 +61,57 @@ export function ChatMessage({ message, onPlayAudio, onRetry }: ChatMessageProps)
   return (
     <>
       <View style={[styles.container, isUser ? styles.userContainer : styles.assistantContainer]}>
-        {!isUser && (
-          <View style={styles.avatarWrapper}>
-            <Avatar voice={{ id: message.id, name: 'Voice', gender: 'female' }} size={32} />
+        {isUser ? (
+          <View style={styles.bubbleRow}>
+            <TouchableOpacity
+              style={[styles.bubble, styles.userBubble]}
+              onPress={handlePress}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.userText}>{message.text}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.bubbleRow}>
+            <TouchableOpacity
+              style={[
+                styles.bubble,
+                styles.assistantBubble,
+                isPending && styles.pendingBubble,
+                isError && styles.errorBubble,
+                isDone && message.audioUri && styles.voiceBubble,
+              ]}
+              onPress={handlePress}
+              onPressIn={handlePressIn}
+              onPressOut={handlePressOut}
+              activeOpacity={0.8}
+              disabled={isUser || isPending}
+            >
+              {isPending ? (
+                <View style={styles.pendingContainer}>
+                  <Text style={styles.pendingText}>Generating audio...</Text>
+                </View>
+              ) : isError ? (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>⚠️ Failed to generate</Text>
+                </View>
+              ) : (
+                <View style={styles.voicePlayerContainer}>
+                  <View style={styles.playButton}>
+                    <Text style={styles.playIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+                  </View>
+                  <View style={styles.voicePlayerRight}>
+                    <Text style={styles.voiceStatus}>
+                      {isPlaying ? 'Playing...' : 'Tap to play'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
           </View>
         )}
-        
-        <TouchableOpacity
-          style={[
-            styles.bubble,
-            isUser ? styles.userBubble : styles.assistantBubble,
-            isDone && message.audioUri ? styles.voiceBubble : null,
-          ]}
-          onPress={handlePress}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          activeOpacity={0.8}
-          disabled={isUser}
-        >
-          {isUser ? (
-            <Text style={styles.userText}>{message.text}</Text>
-          ) : isPending ? (
-            <View style={styles.pendingContainer}>
-              <Text style={styles.pendingText}>Generating audio...</Text>
-            </View>
-          ) : isError ? (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorIcon}>⚠️</Text>
-              <Text style={styles.errorText}>Failed to generate</Text>
-            </View>
-          ) : (
-            <View style={styles.voicePlayerContainer}>
-              <View style={styles.voicePlayerLeft}>
-                <TouchableOpacity style={styles.playButton}>
-                  <Text style={styles.playIcon}>{isPlayingStatus ? '⏸' : '▶'}</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.voicePlayerCenter}>
-                <View style={styles.waveformContainer}>
-                  {[...Array(20)].map((_, i) => (
-                    <View
-                      key={i}
-                      style={[
-                        styles.waveformBar,
-                        { height: Math.random() * 16 + 8 }
-                      ]}
-                    />
-                  ))}
-                </View>
-              </View>
-              <View style={styles.voicePlayerRight}>
-                <Text style={styles.voiceDuration}>
-                  {isPlayingStatus ? 'Playing' : 'Tap to play'}
-                </Text>
-              </View>
-            </View>
-          )}
-        </TouchableOpacity>
       </View>
 
       <Modal
@@ -154,19 +144,17 @@ export function ChatMessage({ message, onPlayAudio, onRetry }: ChatMessageProps)
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
     marginVertical: pinterestSpacing.xs,
     paddingHorizontal: pinterestSpacing.lg,
   },
   userContainer: {
-    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
   },
   assistantContainer: {
-    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
   },
-  avatarWrapper: {
-    marginRight: pinterestSpacing.sm,
-    alignSelf: 'flex-end',
+  bubbleRow: {
+    flexDirection: 'row',
   },
   bubble: {
     maxWidth: '80%',
@@ -181,17 +169,22 @@ const styles = StyleSheet.create({
     backgroundColor: pinterestColors.fill,
     borderBottomLeftRadius: pinterestRounded.xs,
   },
+  pendingBubble: {
+    backgroundColor: pinterestColors.fill,
+  },
+  errorBubble: {
+    backgroundColor: pinterestColors.fill,
+  },
   voiceBubble: {
     backgroundColor: pinterestColors.fill,
   },
   userText: {
-    color: pinterestColors.onPrimary,
+    color: pinterestColors['on-primary'],
     fontSize: 16,
     lineHeight: 22,
   },
   pendingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   pendingText: {
     color: pinterestColors.mute,
@@ -199,12 +192,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  errorIcon: {
-    fontSize: 16,
-    marginRight: pinterestSpacing.sm,
+    alignItems: 'flex-start',
   },
   errorText: {
     color: pinterestColors.destructive,
@@ -213,44 +201,25 @@ const styles = StyleSheet.create({
   voicePlayerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    minWidth: 200,
-  },
-  voicePlayerLeft: {
-    marginRight: pinterestSpacing.md,
+    minWidth: 160,
   },
   playButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
     backgroundColor: pinterestColors.primary,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   playIcon: {
-    color: pinterestColors.onPrimary,
+    color: pinterestColors['on-primary'],
     fontSize: 16,
-  },
-  voicePlayerCenter: {
-    flex: 1,
-    height: 32,
-    justifyContent: 'center',
-  },
-  waveformContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: 32,
-  },
-  waveformBar: {
-    width: 3,
-    backgroundColor: pinterestColors.mute,
-    borderRadius: 2,
   },
   voicePlayerRight: {
     marginLeft: pinterestSpacing.md,
   },
-  voiceDuration: {
-    fontSize: 12,
+  voiceStatus: {
+    fontSize: 14,
     color: pinterestColors.mute,
   },
   modalOverlay: {
@@ -262,8 +231,13 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: pinterestColors.surface,
     borderRadius: pinterestRounded.lg,
-    padding: pinterestSpacing.md,
+    padding: pinterestSpacing.sm,
     minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 5,
   },
   modalButton: {
     paddingVertical: pinterestSpacing.md,

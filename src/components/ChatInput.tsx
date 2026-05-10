@@ -28,49 +28,54 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
-    >
-      <View style={styles.container}>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Message"
-            placeholderTextColor={pinterestColors.ash}
-            value={text}
-            onChangeText={setText}
-            multiline
-            maxLength={1000}
-            editable={!disabled}
-          />
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.sendButton,
-            (!text.trim() || disabled) && styles.sendButtonDisabled,
-          ]}
-          onPress={handleSend}
-          disabled={!text.trim() || disabled}
-        >
-          <View style={styles.sendIcon}>
-            <View style={styles.arrow} />
+    <View style={styles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        <View style={styles.inputRow}>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Message"
+              placeholderTextColor={pinterestColors.ash}
+              value={text}
+              onChangeText={setText}
+              multiline
+              maxLength={1000}
+              editable={!disabled}
+            />
           </View>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+          <TouchableOpacity
+            style={[
+              styles.sendButton,
+              (!text.trim() || disabled) && styles.sendButtonDisabled,
+            ]}
+            onPress={handleSend}
+            disabled={!text.trim() || disabled}
+          >
+            <View style={styles.sendIcon}>
+              <View style={styles.arrow} />
+            </View>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    backgroundColor: pinterestColors.canvas,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: pinterestColors.hairline,
+    paddingBottom: Platform.OS === 'ios' ? 0 : pinterestSpacing.sm,
+  },
+  inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: pinterestSpacing.md,
     paddingVertical: pinterestSpacing.sm,
-    backgroundColor: pinterestColors.canvas,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: pinterestColors.hairline,
   },
   inputContainer: {
     flex: 1,
