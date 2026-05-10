@@ -1,264 +1,113 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
-import { Message, Voice } from './src/types';
-import { initTTS, getTTS, loadVoiceStyle, writeWavFile, TTS_BASE_PATH, TextToSpeech, Style } from './src/utils/ttsEngine';
-import * as FileSystem from 'expo-file-system';
+import ttsEngine, { SupertonicTTS } from './src/utils/ttsEngine';
+import { Voice } from './src/types';
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
+// Voice configurations - M1-M5 male, F1-F5 female
+const VOICES: Voice[] = [
+  { id: 'M1', name: 'Marcus', gender: 'male' },
+  { id: 'M2', name: 'James', gender: 'male' },
+  { id: 'M3', name: 'Alex', gender: 'male' },
+  { id: 'M4', name: 'Ryan', gender: 'male' },
+  { id: 'M5', name: 'David', gender: 'male' },
+  { id: 'F1', name: 'Emma', gender: 'female' },
+  { id: 'F2', name: 'Sophia', gender: 'female' },
+  { id: 'F3', name: 'Olivia', gender: 'female' },
+  { id: 'F4', name: 'Ava', gender: 'female' },
+  { id: 'F5', name: 'Isabella', gender: 'female' },
+];
+
+const DEFAULT_MODEL_ID = 'model.onnx';
 
 export default function App() {
+  const [selectedVoice, setSelectedVoice] = useState<Voice>(VOICES[0]);
+  const [isModelLoaded, setIsModelLoaded] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const [currentScreen, setCurrentScreen] = useState<'home' | 'chat'>('home');
-  const [selectedVoice, setSelectedVoice] = useState<Voice | null>(null);
-  const [allMessages, setAllMessages] = useState<Record<string, Message[]>>({});
-  const [lastMessages, setLastMessages] = useState<Map<string, string>>(new Map());
-  const [ttsReady, setTtsReady] = useState(false);
-  const [ttsLoading, setTtsLoading] = useState('Loading TTS engine...');
-  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
-  
-  const ttsRef = useRef<TextToSpeech | null>(null);
-  const voiceStylesRef = useRef<Map<string, Style>>(new Map());
-  const soundRef = useRef<Audio.Sound | null>(null);
 
-  // Initialize TTS engine
+  // Initialize TTS on app start
   useEffect(() => {
-    const init = async () => {
-      try {
-        await initTTS(TTS_BASE_PATH, (name, current, total) => {
-          setTtsLoading(`Loading ${name}... (${current}/${total})`);
-        });
-        ttsRef.current = getTTS();
-        
-        // Pre-load all voice styles
-        const { VOICES } = await import('./src/data/voices');
-        setTtsLoading('Loading voice styles...');
-        for (const voice of VOICES) {
-          const style = await loadVoiceStyle(`../assets/supertonic/voice_styles/${voice.id}.json`);
-          voiceStylesRef.current.set(voice.id, style);
-        }
-        
-        setTtsReady(true);
-        setTtsLoading('');
-      } catch (error) {
-        console.error('Failed to init TTS:', error);
-        setTtsLoading('Failed to load TTS engine');
-      }
-    };
-    init();
+    initializeTTS();
   }, []);
 
-  const handleSelectChat = useCallback((voice: Voice) => {
-    setSelectedVoice(voice);
-    setCurrentScreen('chat');
-  }, []);
-
-  const handleBack = useCallback(() => {
-    setCurrentScreen('home');
-    setSelectedVoice(null);
-  }, []);
-
-  const handleSendMessage = useCallback(async (text: string) => {
-    if (!selectedVoice) return;
-
-    const userMessage: Message = {
-      id: `user_${Date.now()}`,
-      role: 'user',
-      text,
-      status: 'done',
-      timestamp: new Date(),
-    };
-
-    const assistantMessage: Message = {
-      id: `assistant_${Date.now()}`,
-      role: 'assistant',
-      text,
-      status: 'pending',
-      timestamp: new Date(),
-    };
-
-    setAllMessages(prev => ({
-      ...prev,
-      [selectedVoice.id]: [...(prev[selectedVoice.id] || []), userMessage, assistantMessage],
-    }));
-
-    // Generate TTS in background
-    const generateTTS = async () => {
-      const tts = ttsRef.current;
-      const style = voiceStylesRef.current.get(selectedVoice.id);
+  const initializeTTS = async () => {
+    try {
+      setError(null);
       
-      if (!tts || !style) {
-        setAllMessages(prev => ({
-          ...prev,
-          [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-            msg.id === assistantMessage.id ? { ...msg, status: 'error' } : msg
-          ),
-        }));
+      // Check if model is already cached
+      const isLoaded = ttsEngine.isLoaded();
+      if (isLoaded) {
+        setIsModelLoaded(true);
         return;
       }
 
-      try {
-        const { wav } = await tts.call(text, 'en', style, 8, 1.05, 0.3);
-        
-        // Write WAV file to cache
-        const wavBuffer = writeWavFile(wav, tts.sampleRate);
-        const base64 = arrayBufferToBase64(wavBuffer);
-        const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
-        await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
-        
-        setAllMessages(prev => ({
-          ...prev,
-          [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-            msg.id === assistantMessage.id ? { ...msg, audioUri: fileUri, status: 'done' } : msg
-          ),
-        }));
-      } catch (error) {
-        console.error('TTS error:', error);
-        setAllMessages(prev => ({
-          ...prev,
-          [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-            msg.id === assistantMessage.id ? { ...msg, status: 'error' } : msg
-          ),
-        }));
-      }
-    };
-
-    generateTTS();
-  }, [selectedVoice]);
-
-  const handleRetry = useCallback(async (message: Message) => {
-    if (!selectedVoice) return;
-
-    setAllMessages(prev => ({
-      ...prev,
-      [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-        msg.id === message.id ? { ...msg, status: 'pending', audioUri: undefined } : msg
-      ),
-    }));
-
-    const tts = ttsRef.current;
-    const style = voiceStylesRef.current.get(selectedVoice.id);
-    
-    if (!tts || !style) return;
-
-    try {
-      const { wav } = await tts.call(message.text, 'en', style, 8, 1.05, 0.3);
-      const wavBuffer = writeWavFile(wav, tts.sampleRate);
-      const base64 = arrayBufferToBase64(wavBuffer);
-      const fileUri = `${FileSystem.cacheDirectory}tts_${Date.now()}.wav`;
-      await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      // Download model if not cached
+      setIsDownloading(true);
+      setDownloadProgress(0);
       
-      setAllMessages(prev => ({
-        ...prev,
-        [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-          msg.id === message.id ? { ...msg, audioUri: fileUri, status: 'done' } : msg
-        ),
-      }));
-    } catch (error) {
-      setAllMessages(prev => ({
-        ...prev,
-        [selectedVoice.id]: prev[selectedVoice.id].map(msg =>
-          msg.id === message.id ? { ...msg, status: 'error' } : msg
-        ),
-      }));
-    }
-  }, [selectedVoice]);
-
-  const handleUpdateLastMessage = useCallback((text: string) => {
-    if (!selectedVoice) return;
-    setLastMessages(prev => {
-      const next = new Map(prev);
-      next.set(selectedVoice.id, text);
-      return next;
-    });
-  }, [selectedVoice]);
-
-  const handlePlayAudio = useCallback(async (messageId: string, audioUri?: string) => {
-    if (!audioUri) return;
-    
-    // If same message is playing, stop it
-    if (currentlyPlayingId === messageId && soundRef.current) {
-      await soundRef.current.stopAsync();
-      await soundRef.current.unloadAsync();
-      soundRef.current = null;
-      setCurrentlyPlayingId(null);
-      return;
-    }
-    
-    // Stop any currently playing sound
-    if (soundRef.current) {
-      await soundRef.current.stopAsync();
-      await soundRef.current.unloadAsync();
-    }
-    
-    // Load and play new sound
-    try {
-      const { sound } = await Audio.Sound.createAsync({ uri: audioUri });
-      soundRef.current = sound;
-      setCurrentlyPlayingId(messageId);
-      
-      await sound.playAsync();
-      
-      // When playback finishes, reset state
-      sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-        if (status.isLoaded && status.didJustFinish) {
-          setCurrentlyPlayingId(null);
-        }
+      const success = await ttsEngine.downloadModel(DEFAULT_MODEL_ID, (progress) => {
+        setDownloadProgress(progress);
       });
-    } catch (error) {
-      console.error('Audio playback error:', error);
-      setCurrentlyPlayingId(null);
-    }
-  }, [currentlyPlayingId]);
 
-  // Cleanup audio on unmount
-  useEffect(() => {
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
+      if (!success) {
+        throw new Error('Failed to download model');
       }
-    };
+
+      // Load the model
+      const loaded = await ttsEngine.loadModel(DEFAULT_MODEL_ID);
+      if (!loaded) {
+        throw new Error('Failed to load model');
+      }
+
+      setIsModelLoaded(true);
+    } catch (err) {
+      console.error('TTS initialization error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to initialize TTS');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleSelectVoice = useCallback((voice: Voice) => {
+    setSelectedVoice(voice);
   }, []);
 
-  // Show loading screen while TTS initializes
-  if (!ttsReady) {
+  const handleStartChat = useCallback(() => {
+    setCurrentScreen('chat');
+  }, []);
+
+  const handleBackToHome = useCallback(() => {
+    setCurrentScreen('home');
+  }, []);
+
+  // Render home screen
+  if (currentScreen === 'home') {
     return (
       <HomeScreen
-        onSelectChat={() => {}}
-        lastMessages={new Map()}
-        loadingMessage={ttsLoading}
+        voices={VOICES}
+        selectedVoice={selectedVoice}
+        onSelectVoice={handleSelectVoice}
+        onStartChat={handleStartChat}
+        isModelLoaded={isModelLoaded}
+        isDownloading={isDownloading}
+        downloadProgress={downloadProgress}
+        error={error}
+        onRetry={initializeTTS}
       />
     );
   }
 
-  if (currentScreen === 'chat' && selectedVoice) {
-    return (
-      <ChatScreen
-        voice={selectedVoice}
-        messages={(allMessages[selectedVoice.id] || []).map(msg => ({
-          ...msg,
-          status: msg.id === currentlyPlayingId ? 'playing' : msg.status,
-        }))}
-        onSendMessage={handleSendMessage}
-        onRetry={handleRetry}
-        onUpdateLastMessage={handleUpdateLastMessage}
-        onBack={handleBack}
-        onPlayAudio={handlePlayAudio}
-      />
-    );
-  }
-
+  // Render chat screen
   return (
-    <HomeScreen
-      onSelectChat={handleSelectChat}
-      lastMessages={lastMessages}
+    <ChatScreen
+      voice={selectedVoice}
+      onBack={handleBackToHome}
     />
   );
 }

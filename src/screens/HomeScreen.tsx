@@ -2,185 +2,331 @@ import React from 'react';
 import {
   View,
   Text,
-  FlatList,
-  TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
-  StatusBar,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { Avatar } from '../components/Avatar';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { Voice } from '../types';
-import { VOICES } from '../data/voices';
-import { pinterestColors, pinterestSpacing } from '../theme/pinterest';
+import { pinterestColors, pinterestSpacing, pinterestTypography } from '../theme/pinterest';
 
 interface HomeScreenProps {
-  onSelectChat: (voice: Voice) => void;
-  lastMessages: Map<string, string>;
-  loadingMessage?: string;
+  voices: Voice[];
+  selectedVoice: Voice;
+  onSelectVoice: (voice: Voice) => void;
+  onStartChat: () => void;
+  isModelLoaded: boolean;
+  isDownloading: boolean;
+  downloadProgress: number;
+  error: string | null;
+  onRetry: () => void;
 }
 
-export const HomeScreen: React.FC<HomeScreenProps> = ({
-  onSelectChat,
-  lastMessages,
-  loadingMessage,
-}) => {
-  const maleVoices = VOICES.filter(v => v.gender === 'male');
-  const femaleVoices = VOICES.filter(v => v.gender === 'female');
+export function HomeScreen({
+  voices,
+  selectedVoice,
+  onSelectVoice,
+  onStartChat,
+  isModelLoaded,
+  isDownloading,
+  downloadProgress,
+  error,
+  onRetry,
+}: HomeScreenProps) {
+  const maleVoices = voices.filter(v => v.gender === 'male');
+  const femaleVoices = voices.filter(v => v.gender === 'female');
 
-  const renderChatItem = ({ item }: { item: Voice }) => {
-    const lastMsg = lastMessages.get(item.id) || 'Start a conversation...';
-    const preview = lastMsg.length > 45 ? lastMsg.substring(0, 45) + '...' : lastMsg;
-
-    return (
-      <TouchableOpacity
-        style={styles.chatItem}
-        onPress={() => onSelectChat(item)}
-        activeOpacity={0.7}
-      >
-        <Avatar voice={item} size={52} />
-        <View style={styles.chatInfo}>
-          <View style={styles.chatHeader}>
-            <Text style={styles.chatName}>{item.name}</Text>
-            <Text style={styles.chatTime}>Now</Text>
-          </View>
-          <Text style={styles.chatPreview} numberOfLines={1}>
-            {preview}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderSectionHeader = (title: string) => (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
-    </View>
-  );
-
-  const renderContent = () => {
-    const sections: { title: string; data: Voice[] }[] = [];
-
-    if (maleVoices.length > 0) {
-      sections.push({ title: 'Male', data: maleVoices });
+  const handleStartChat = () => {
+    if (!isModelLoaded) {
+      Alert.alert(
+        'Model Not Ready',
+        'Please wait for the TTS model to finish downloading.',
+        [{ text: 'OK' }]
+      );
+      return;
     }
-    if (femaleVoices.length > 0) {
-      sections.push({ title: 'Female', data: femaleVoices });
-    }
-
-    return sections.map((section) => (
-      <View key={section.title}>
-        {renderSectionHeader(section.title)}
-        <FlatList
-          data={section.data}
-          renderItem={renderChatItem}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-        />
-      </View>
-    ));
+    onStartChat();
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={pinterestColors.canvas} />
-
+      <StatusBar style="dark" />
+      
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Messages</Text>
-        <Text style={styles.headerSubtitle}>{VOICES.length} voices available</Text>
+        <Text style={styles.title}>Voice Chat</Text>
+        <Text style={styles.subtitle}>Select a voice and start chatting</Text>
       </View>
 
-      {loadingMessage ? (
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>{loadingMessage}</Text>
+      {/* Error Message */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        <FlatList
-          data={[]}
-          renderItem={null}
-          ListHeaderComponent={renderContent}
-          contentContainerStyle={styles.listContent}
-        />
       )}
+
+      {/* Download Progress */}
+      {isDownloading && (
+        <View style={styles.progressContainer}>
+          <ActivityIndicator size="small" color={pinterestColors.primary} />
+          <Text style={styles.progressText}>
+            Downloading TTS Model... {Math.round(downloadProgress * 100)}%
+          </Text>
+          <View style={styles.progressBar}>
+            <View style={[styles.progressFill, { width: `${downloadProgress * 100}%` }]} />
+          </View>
+        </View>
+      )}
+
+      {/* Male Voices */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Male Voices</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.voiceList}>
+          {maleVoices.map((voice) => (
+            <TouchableOpacity
+              key={voice.id}
+              style={[
+                styles.voiceCard,
+                selectedVoice.id === voice.id && styles.selectedVoiceCard,
+              ]}
+              onPress={() => onSelectVoice(voice)}
+            >
+              <Text style={styles.voiceEmoji}>👨</Text>
+              <Text style={[
+                styles.voiceName,
+                selectedVoice.id === voice.id && styles.selectedVoiceName,
+              ]}>
+                {voice.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Female Voices */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Female Voices</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.voiceList}>
+          {femaleVoices.map((voice) => (
+            <TouchableOpacity
+              key={voice.id}
+              style={[
+                styles.voiceCard,
+                selectedVoice.id === voice.id && styles.selectedVoiceCard,
+              ]}
+              onPress={() => onSelectVoice(voice)}
+            >
+              <Text style={styles.voiceEmoji}>👩</Text>
+              <Text style={[
+                styles.voiceName,
+                selectedVoice.id === voice.id && styles.selectedVoiceName,
+              ]}>
+                {voice.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Selected Voice Info */}
+      <View style={styles.selectedInfo}>
+        <Text style={styles.selectedLabel}>Selected Voice:</Text>
+        <Text style={styles.selectedValue}>
+          {selectedVoice.name} ({selectedVoice.gender})
+        </Text>
+      </View>
+
+      {/* Start Chat Button */}
+      <TouchableOpacity
+        style={[
+          styles.startButton,
+          (!isModelLoaded || isDownloading) && styles.startButtonDisabled,
+        ]}
+        onPress={handleStartChat}
+        disabled={!isModelLoaded || isDownloading}
+      >
+        <Text style={styles.startButtonText}>
+          {isDownloading ? 'Downloading...' : 'Start Chat'}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Status */}
+      <View style={styles.statusContainer}>
+        <View style={[styles.statusDot, isModelLoaded ? styles.statusDotGreen : styles.statusDotYellow]} />
+        <Text style={styles.statusText}>
+          {isModelLoaded ? 'Ready' : isDownloading ? 'Downloading...' : 'Initializing...'}
+        </Text>
+      </View>
     </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: pinterestColors.canvas,
+    backgroundColor: pinterestColors.background,
   },
   header: {
     paddingHorizontal: pinterestSpacing.lg,
-    paddingTop: pinterestSpacing.lg,
-    paddingBottom: pinterestSpacing.xs,
+    paddingTop: pinterestSpacing.xl,
+    paddingBottom: pinterestSpacing.lg,
   },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: pinterestColors.ink,
-    letterSpacing: -0.5,
+  title: {
+    ...pinterestTypography.heading,
+    color: pinterestColors.textPrimary,
+    marginBottom: pinterestSpacing.xs,
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: pinterestColors.mute,
-    marginTop: pinterestSpacing.xxs,
-    paddingBottom: pinterestSpacing.sm,
+  subtitle: {
+    ...pinterestTypography.body,
+    color: pinterestColors.textSecondary,
   },
-  listContent: {
-    paddingBottom: pinterestSpacing.section,
+  errorContainer: {
+    marginHorizontal: pinterestSpacing.lg,
+    padding: pinterestSpacing.md,
+    backgroundColor: '#FFEBEE',
+    borderRadius: pinterestSpacing.sm,
+    marginBottom: pinterestSpacing.md,
   },
-  sectionHeader: {
-    backgroundColor: pinterestColors['surface-soft'],
+  errorText: {
+    color: '#C62828',
+    marginBottom: pinterestSpacing.sm,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: pinterestSpacing.xs,
+    paddingHorizontal: pinterestSpacing.md,
+    backgroundColor: '#C62828',
+    borderRadius: pinterestSpacing.xs,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  progressContainer: {
+    marginHorizontal: pinterestSpacing.lg,
+    padding: pinterestSpacing.md,
+    backgroundColor: pinterestColors.surface,
+    borderRadius: pinterestSpacing.sm,
+    marginBottom: pinterestSpacing.md,
+    alignItems: 'center',
+  },
+  progressText: {
+    marginTop: pinterestSpacing.sm,
+    ...pinterestTypography.caption,
+    color: pinterestColors.textSecondary,
+  },
+  progressBar: {
+    width: '100%',
+    height: 6,
+    backgroundColor: pinterestColors.border,
+    borderRadius: 3,
+    marginTop: pinterestSpacing.sm,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: pinterestColors.primary,
+  },
+  section: {
     paddingHorizontal: pinterestSpacing.lg,
-    paddingVertical: pinterestSpacing.sm,
+    marginBottom: pinterestSpacing.lg,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: pinterestColors.mute,
-    letterSpacing: 0.8,
+    ...pinterestTypography.subheading,
+    color: pinterestColors.textPrimary,
+    marginBottom: pinterestSpacing.md,
   },
-  chatItem: {
+  voiceList: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: pinterestSpacing.lg,
+  },
+  voiceCard: {
+    width: 100,
     paddingVertical: pinterestSpacing.md,
-    backgroundColor: pinterestColors.canvas,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: pinterestColors.hairline,
+    paddingHorizontal: pinterestSpacing.sm,
+    backgroundColor: pinterestColors.surface,
+    borderRadius: pinterestSpacing.sm,
+    marginRight: pinterestSpacing.sm,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
-  chatInfo: {
-    flex: 1,
-    marginLeft: pinterestSpacing.md,
+  selectedVoiceCard: {
+    borderColor: pinterestColors.primary,
+    backgroundColor: pinterestColors.primaryLight,
   },
-  chatHeader: {
+  voiceEmoji: {
+    fontSize: 32,
+    marginBottom: pinterestSpacing.xs,
+  },
+  voiceName: {
+    ...pinterestTypography.caption,
+    color: pinterestColors.textPrimary,
+    fontWeight: '500',
+  },
+  selectedVoiceName: {
+    color: pinterestColors.primary,
+    fontWeight: '700',
+  },
+  selectedInfo: {
+    marginHorizontal: pinterestSpacing.lg,
+    padding: pinterestSpacing.md,
+    backgroundColor: pinterestColors.surface,
+    borderRadius: pinterestSpacing.sm,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: pinterestSpacing.xxs,
+    marginBottom: pinterestSpacing.lg,
   },
-  chatName: {
-    fontSize: 16,
+  selectedLabel: {
+    ...pinterestTypography.body,
+    color: pinterestColors.textSecondary,
+  },
+  selectedValue: {
+    ...pinterestTypography.body,
+    color: pinterestColors.primary,
     fontWeight: '600',
-    color: pinterestColors.ink,
   },
-  chatTime: {
-    fontSize: 12,
-    color: pinterestColors.ash,
+  startButton: {
+    marginHorizontal: pinterestSpacing.lg,
+    paddingVertical: pinterestSpacing.md,
+    backgroundColor: pinterestColors.primary,
+    borderRadius: pinterestSpacing.sm,
+    alignItems: 'center',
+    marginBottom: pinterestSpacing.lg,
   },
-  chatPreview: {
-    fontSize: 14,
-    color: pinterestColors.mute,
-    lineHeight: 18,
+  startButtonDisabled: {
+    backgroundColor: pinterestColors.textTertiary,
   },
-  loadingContainer: {
-    flex: 1,
+  startButtonText: {
+    ...pinterestTypography.button,
+    color: pinterestColors.onPrimary,
+  },
+  statusContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingBottom: pinterestSpacing.lg,
   },
-  loadingText: {
-    fontSize: 16,
-    color: pinterestColors.mute,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: pinterestSpacing.xs,
+  },
+  statusDotGreen: {
+    backgroundColor: '#4CAF50',
+  },
+  statusDotYellow: {
+    backgroundColor: '#FFC107',
+  },
+  statusText: {
+    ...pinterestTypography.caption,
+    color: pinterestColors.textSecondary,
   },
 });

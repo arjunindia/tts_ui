@@ -1,455 +1,384 @@
-import * as ort from 'onnxruntime-react-native';
+import * as FileSystem from 'expo-file-system';
+import { InferenceSession, Tensor } from 'onnxruntime-react-native';
+import { Audio, AVPlaybackStatus } from 'expo-av';
+import { Platform } from 'react-native';
+
+// Base URL for Supertonic model files
+const MODEL_BASE_URL = 'https://huggingface.co/Supertone/supertonic-3/resolve/main';
+const VOICE_BASE_URL = 'https://huggingface.co/Supertone/supertonic-3/resolve/main/voice_styles';
+
+// Constants
+const SAMPLE_RATE = 24000;
+
 // Available languages
-export const AVAILABLE_LANGS = [
-  'en', 'ko', 'ja', 'ar', 'bg', 'cs', 'da', 'de', 'el', 'es',
-  'et', 'fi', 'fr', 'hi', 'hr', 'hu', 'id', 'it', 'lt', 'lv',
-  'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sl', 'sv', 'tr', 'uk', 'vi'
+const AVAILABLE_LANGS = [
+  'en', 'ko', 'ja', 'ar', 'bg', 'cs', 'da', 'de', 'el', 'es', 
+  'fa', 'fr', 'he', 'hi', 'hr', 'hu', 'id', 'it', 'lt', 'ms', 
+  'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sq', 'sv', 'th', 'tr', 'uk', 'vi', 'zh'
 ];
 
-export const isValidLang = (lang: string) => AVAILABLE_LANGS.includes(lang);
+// ASCII to IPA mapping for text normalization
+const LATIN_TO_IPA: Record<string, string> = {
+  'a': 'ə', 'e': 'ɛ', 'i': 'ɪ', 'o': 'o', 'u': 'ʌ',
+  'th': 'θ', 'sh': 'ʃ', 'ch': 'tʃ', 'ng': 'ŋ', 'j': 'dʒ',
+};
 
-// ============ Unicode Processor ============
-export class UnicodeProcessor {
-  private indexer: number[];
+// Common words for basic English phonemization
+const COMMON_WORDS: Record<string, string> = {
+  'hello': 'həˈloʊ', 'world': 'wˈɝld', 'the': 'ðə', 'is': 'ɪz',
+  'a': 'ə', 'test': 'tˈɛst', 'this': 'ðˈɪs', 'app': 'ˈæp',
+  'voice': 'vˈɔɪs', 'speech': 'spˈiːtʃ', 'audio': 'ˈɔːdioʊ',
+};
 
-  constructor(indexer: number[]) {
-    this.indexer = indexer;
-  }
+class SupertonicTTS {
+  private session: InferenceSession | null = null;
+  private isModelLoaded = false;
+  private currentModelId: string | null = null;
 
-  preprocessText(text: string, lang: string): string {
-    text = text.normalize('NFKD');
-
-    // Remove emojis
-    const emojiPattern = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/gu;
-    text = text.replace(emojiPattern, '');
-
-    // Replace symbols
-    const replacements: Record<string, string> = {
-      '–': '-', '‑': '-', '—': '-', '_': ' ',
-      '\u201C': '"', '\u201D': '"', '\u2018': "'", '\u2019': "'",
-      '´': "'", '`': "'", '[': ' ', ']': ' ', '|': ' ', '/': ' ',
-      '#': ' ', '→': ' ', '←': ' ',
-    };
-    for (const [k, v] of Object.entries(replacements)) {
-      text = text.replaceAll(k, v);
-    }
-
-    text = text.replace(/[♥☆♡©\\]/g, '');
-
-    const exprReplacements: Record<string, string> = {
-      '@': ' at ', 'e.g.,': 'for example, ', 'i.e.,': 'that is, ',
-    };
-    for (const [k, v] of Object.entries(exprReplacements)) {
-      text = text.replaceAll(k, v);
-    }
-
-    text = text.replace(/ ,/g, ',').replace(/ \./g, '.')
-      .replace(/ !/g, '!').replace(/ \?/g, '?')
-      .replace(/ ;/g, ';').replace(/ :/g, ':')
-      .replace(/ '/g, "'").replace(/"/g, '');
-
-    text = text.replace(/""/g, '"').replace(/''/g, "'").replace(/``/g, '`');
-    text = text.replace(/\s+/g, ' ').trim();
-
-    if (!/[.!?;:,'")\]\}…。」』】〉》›»]$/.test(text)) {
-      text += '.';
-    }
-
-    if (!isValidLang(lang)) {
-      throw new Error(`Invalid language: ${lang}. Available: ${AVAILABLE_LANGS.join(', ')}`);
-    }
-
-    return `<${lang}>${text}</${lang}>`;
-  }
-
-  call(textList: string[], langList: string[]): { textIds: number[][]; textMask: number[][][] } {
-    const processedTexts = textList.map((text, i) => this.preprocessText(text, langList[i]));
-
-    const textIdsLengths = processedTexts.map(t => t.length);
-    const maxLen = Math.max(...textIdsLengths);
-
-    const textIds = processedTexts.map(text => {
-      const row = new Array(maxLen).fill(0);
-      for (let j = 0; j < text.length; j++) {
-        const codePoint = text.codePointAt(j) ?? 0;
-        row[j] = codePoint < this.indexer.length ? this.indexer[codePoint] : -1;
+  /**
+   * Check if ONNX runtime is available
+   */
+  checkOnnxAvailability(): boolean {
+    try {
+      if (typeof InferenceSession === 'undefined' || typeof InferenceSession.create !== 'function') {
+        console.error('ONNX Runtime is not properly initialized');
+        return false;
       }
-      return row;
-    });
-
-    const textMask = this.lengthToMask(textIdsLengths, maxLen);
-    return { textIds, textMask };
+      return true;
+    } catch (error) {
+      console.error('Error checking ONNX availability:', error);
+      return false;
+    }
   }
 
-  private lengthToMask(lengths: number[], maxLen: number | null = null): number[][][] {
-    const actualMax = maxLen ?? Math.max(...lengths);
-    return lengths.map(len => {
-      const row = new Array(actualMax).fill(0.0);
-      for (let j = 0; j < Math.min(len, actualMax); j++) {
-        row[j] = 1.0;
+  /**
+   * Load ONNX model from local cache
+   */
+  async loadModel(modelId: string = 'model.onnx'): Promise<boolean> {
+    try {
+      if (!this.checkOnnxAvailability()) {
+        console.error('ONNX Runtime is not available on this platform');
+        return false;
       }
-      return [row];
-    });
-  }
-}
-
-// ============ Style ============
-export class Style {
-  constructor(public ttl: ort.Tensor, public dp: ort.Tensor) {}
-}
-
-// ============ TextToSpeech ============
-export class TextToSpeech {
-  sampleRate: number;
-
-  constructor(
-    private cfgs: any,
-    private textProcessor: UnicodeProcessor,
-    private dpSession: ort.InferenceSession,
-    private textEncSession: ort.InferenceSession,
-    private vectorEstSession: ort.InferenceSession,
-    private vocoderSession: ort.InferenceSession,
-  ) {
-    this.sampleRate = cfgs.ae.sample_rate;
-  }
-
-  private lengthToMask(lengths: number[], maxLen: number | null = null): number[][][] {
-    const actualMax = maxLen ?? Math.max(...lengths);
-    return lengths.map(len => {
-      const row = new Array(actualMax).fill(0.0);
-      for (let j = 0; j < Math.min(len, actualMax); j++) {
-        row[j] = 1.0;
+      
+      const modelPath = FileSystem.cacheDirectory + modelId;
+      const fileInfo = await FileSystem.getInfoAsync(modelPath);
+      
+      if (!fileInfo.exists) {
+        console.error('Model file not found at', modelPath);
+        return false;
       }
-      return [row];
-    });
+
+      console.log('Loading model from:', modelPath);
+      
+      const options = {
+        executionProviders: ['cpu'],
+        graphOptimizationLevel: 'all' as const,
+      };
+      
+      this.session = await InferenceSession.create(modelPath, options);
+      
+      if (!this.session) {
+        console.error('Failed to create inference session');
+        return false;
+      }
+      
+      this.isModelLoaded = true;
+      this.currentModelId = modelId;
+      console.log('Model loaded successfully:', modelId);
+      return true;
+    } catch (error) {
+      console.error('Error loading model:', error);
+      return false;
+    }
   }
 
-  private sampleNoisyLatent(
-    duration: number[],
-    sampleRate: number,
-    baseChunkSize: number,
-    chunkCompress: number,
-    latentDim: number
-  ): { xt: number[][][]; latentMask: number[][][] } {
-    const bsz = duration.length;
-    const maxDur = Math.max(...duration);
-    const wavLenMax = Math.floor(maxDur * sampleRate);
-    const wavLengths = duration.map(d => Math.floor(d * sampleRate));
+  /**
+   * Download a model file
+   */
+  async downloadModel(modelId: string, onProgress?: (progress: number) => void): Promise<boolean> {
+    try {
+      const modelPath = FileSystem.cacheDirectory + modelId;
+      const fileInfo = await FileSystem.getInfoAsync(modelPath);
+      
+      if (fileInfo.exists) {
+        console.log(`Model ${modelId} already cached`);
+        return true;
+      }
 
-    const chunkSize = baseChunkSize * chunkCompress;
-    const latentLen = Math.floor((wavLenMax + chunkSize - 1) / chunkSize);
-    const latentDimVal = latentDim * chunkCompress;
+      const url = `${MODEL_BASE_URL}/onnx/${modelId}`;
+      console.log(`Downloading model from ${url}`);
 
-    const xt: number[][][] = [];
-    for (let b = 0; b < bsz; b++) {
-      const batch: number[][] = [];
-      for (let d = 0; d < latentDimVal; d++) {
-        const row: number[] = [];
-        for (let t = 0; t < latentLen; t++) {
-          const u1 = Math.max(0.0001, Math.random());
-          const u2 = Math.random();
-          row.push(Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2));
+      const downloadResumable = FileSystem.createDownloadResumable(
+        url,
+        modelPath,
+        {},
+        (downloadProgress) => {
+          const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
+          onProgress?.(progress);
         }
-        batch.push(row);
-      }
-      xt.push(batch);
-    }
-
-    const latentLengths = wavLengths.map(len => Math.floor((len + chunkSize - 1) / chunkSize));
-    const latentMask = this.lengthToMask(latentLengths, latentLen);
-
-    for (let b = 0; b < bsz; b++) {
-      for (let d = 0; d < latentDimVal; d++) {
-        for (let t = 0; t < latentLen; t++) {
-          xt[b][d][t] *= latentMask[b][0][t];
-        }
-      }
-    }
-
-    return { xt, latentMask };
-  }
-
-  async _infer(
-    textList: string[],
-    langList: string[],
-    style: Style,
-    totalStep: number,
-    speed: number = 1.05,
-    progressCallback?: (step: number, total: number) => void
-  ): Promise<{ wav: number[]; duration: number[] }> {
-    const bsz = textList.length;
-
-    const { textIds, textMask } = this.textProcessor.call(textList, langList);
-
-    const textIdsFlat = new BigInt64Array(textIds.flat().map(x => BigInt(x)));
-    const textIdsTensor = new ort.Tensor('int64', textIdsFlat, [bsz, textIds[0].length]);
-
-    const textMaskFlat = new Float32Array(textMask.flat(2));
-    const textMaskTensor = new ort.Tensor('float32', textMaskFlat, [bsz, 1, textMask[0][0].length]);
-
-    // Duration prediction
-    const dpOutputs = await this.dpSession.run({
-      text_ids: textIdsTensor,
-      style_dp: style.dp,
-      text_mask: textMaskTensor
-    });
-    const duration = Array.from((dpOutputs.duration as ort.Tensor).data as Float32Array);
-
-    for (let i = 0; i < duration.length; i++) {
-      duration[i] /= speed;
-    }
-
-    // Text encoding
-    const textEncOutputs = await this.textEncSession.run({
-      text_ids: textIdsTensor,
-      style_ttl: style.ttl,
-      text_mask: textMaskTensor
-    });
-    const textEmb = textEncOutputs.text_emb as ort.Tensor;
-
-    // Sample noisy latent
-    const { xt, latentMask } = this.sampleNoisyLatent(
-      duration, this.sampleRate,
-      this.cfgs.inference.base_chunk_size,
-      this.cfgs.inference.chunk_compress,
-      this.cfgs.inference.latent_dim
-    );
-
-    const latentLengths = latentMask.map(m => m[0].filter(x => x > 0).length);
-    const maxLatentLen = Math.max(...latentLengths);
-
-    // Denoising loop
-    for (let step = 0; step < totalStep; step++) {
-      if (progressCallback) {
-        progressCallback(step + 1, totalStep);
-      }
-
-      const currentStepArr = new Float32Array(bsz).fill(step);
-      const currentStepTensor = new ort.Tensor('float32', currentStepArr, [bsz]);
-      const totalStepArr = new Float32Array(bsz).fill(totalStep);
-      const totalStepTensor = new ort.Tensor('float32', totalStepArr, [bsz]);
-
-      const xtFlat = new Float32Array(xt.flat(2));
-      const xtTensor = new ort.Tensor('float32', xtFlat, [bsz, xt[0].length, xt[0][0].length]);
-
-      const latentMaskFlat = new Float32Array(bsz * maxLatentLen);
-      for (let b = 0; b < bsz; b++) {
-        for (let t = 0; t < maxLatentLen; t++) {
-          latentMaskFlat[b * maxLatentLen + t] = latentMask[b][0][t] || 0;
-        }
-      }
-
-      const vectorEstOutputs = await this.vectorEstSession.run({
-        noisy_latent: xtTensor,
-        text_emb: textEmb,
-        style_ttl: style.ttl,
-        latent_mask: new ort.Tensor('float32', latentMaskFlat, [bsz, 1, maxLatentLen]),
-        text_mask: textMaskTensor,
-        current_step: currentStepTensor,
-        total_step: totalStepTensor
-      });
-
-      const denoised = Array.from((vectorEstOutputs.denoised_latent as ort.Tensor).data as Float32Array);
-
-      // Reshape back to 3D
-      const latentDim = xt[0].length;
-      const latentLen = xt[0][0].length;
-      xt.length = 0;
-      let idx = 0;
-      for (let b = 0; b < bsz; b++) {
-        const batch: number[][] = [];
-        for (let d = 0; d < latentDim; d++) {
-          const row: number[] = [];
-          for (let t = 0; t < latentLen; t++) {
-            row.push(denoised[idx++]);
-          }
-          batch.push(row);
-        }
-        xt.push(batch);
-      }
-    }
-
-    // Vocoder
-    const finalXtFlat = new Float32Array(xt.flat(2));
-    const finalXtTensor = new ort.Tensor('float32', finalXtFlat, [bsz, xt[0].length, xt[0][0].length]);
-
-    const vocoderOutputs = await this.vocoderSession.run({
-      latent: finalXtTensor
-    });
-
-    const wav = Array.from((vocoderOutputs.wav_tts as ort.Tensor).data as Float32Array);
-    return { wav, duration };
-  }
-
-  async call(
-    text: string,
-    lang: string,
-    style: Style,
-    totalStep: number,
-    speed: number = 1.05,
-    silenceDuration: number = 0.3,
-    progressCallback?: (step: number, total: number) => void
-  ): Promise<{ wav: number[]; duration: [number] }> {
-    if (style.ttl.dims[0] !== 1) {
-      throw new Error('Single speaker TTS only supports single style');
-    }
-
-    const maxLen = (lang === 'ko' || lang === 'ja') ? 120 : 300;
-    const textChunks = chunkText(text, maxLen);
-    const langList = new Array(textChunks.length).fill(lang);
-
-    let wavCat: number[] = [];
-    let durCat = 0;
-
-    for (let i = 0; i < textChunks.length; i++) {
-      const { wav, duration } = await this._infer(
-        [textChunks[i]], [langList[i]], style, totalStep, speed, progressCallback
       );
 
-      if (wavCat.length === 0) {
-        wavCat = wav;
-        durCat = duration[0];
-      } else {
-        const silenceLen = Math.floor(silenceDuration * this.sampleRate);
-        wavCat = [...wavCat, ...new Array(silenceLen).fill(0), ...wav];
-        durCat += duration[0] + silenceDuration;
+      const result = await downloadResumable.downloadAsync();
+      return !!result?.uri;
+    } catch (error) {
+      console.error('Error downloading model:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Download a voice style file
+   */
+  async downloadVoiceStyle(voiceId: string): Promise<boolean> {
+    try {
+      const voicePath = FileSystem.documentDirectory + `voices/${voiceId}.json`;
+      const fileInfo = await FileSystem.getInfoAsync(voicePath);
+      
+      if (fileInfo.exists) {
+        return true;
       }
-    }
 
-    return { wav: wavCat, duration: [durCat] };
-  }
-}
-
-function chunkText(text: string, maxLen: number = 300): string[] {
-  const paragraphs = text.trim().split(/\n\s*\n+/).filter(p => p.trim());
-  const chunks: string[] = [];
-
-  for (const paragraph of paragraphs) {
-    const trimmed = paragraph.trim();
-    if (!trimmed) continue;
-
-    const sentences = trimmed.split(/(?<!Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.|Sr\.|Jr\.|Ph\.D\.|etc\.|e\.g\.|i\.e\.|vs\.|Inc\.|Ltd\.|Co\.|Corp\.|St\.|Ave\.|Blvd\.)(?<!\b[A-Z]\.)(?<=[.!?])\s+/);
-
-    let currentChunk = '';
-
-    for (const sentence of sentences) {
-      if (currentChunk.length + sentence.length + 1 <= maxLen) {
-        currentChunk += (currentChunk ? ' ' : '') + sentence;
-      } else {
-        if (currentChunk) chunks.push(currentChunk.trim());
-        currentChunk = sentence;
+      // Create voices directory
+      const voicesDir = FileSystem.documentDirectory + 'voices/';
+      const dirInfo = await FileSystem.getInfoAsync(voicesDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(voicesDir, { intermediates: true });
       }
+
+      const url = `${VOICE_BASE_URL}/${voiceId}.json`;
+      console.log(`Downloading voice style from ${url}`);
+
+      const result = await FileSystem.downloadAsync(url, voicePath);
+      return result.status === 200;
+    } catch (error) {
+      console.error('Error downloading voice style:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Load voice style from local file
+   */
+  async loadVoiceStyle(voiceId: string): Promise<number[] | null> {
+    try {
+      const voicePath = FileSystem.documentDirectory + `voices/${voiceId}.json`;
+      const fileInfo = await FileSystem.getInfoAsync(voicePath);
+      
+      if (!fileInfo.exists) {
+        console.log(`Voice style ${voiceId} not found locally, downloading...`);
+        const downloaded = await this.downloadVoiceStyle(voiceId);
+        if (!downloaded) return null;
+      }
+
+      const content = await FileSystem.readAsStringAsync(voicePath);
+      const data = JSON.parse(content);
+      return data.embedding || data.style || null;
+    } catch (error) {
+      console.error('Error loading voice style:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Normalize text for synthesis
+   */
+  normalizeText(text: string): string {
+    return text
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/…/g, '...');
+  }
+
+  /**
+   * Simple phonemization (basic English approximation)
+   */
+  phonemize(text: string): string {
+    const normalized = this.normalizeText(text);
+    const words = normalized.split(/\s+/);
+    
+    return words.map(word => {
+      const lower = word.toLowerCase().replace(/[.,!?;:'"]/g, '');
+      if (COMMON_WORDS[lower]) {
+        return COMMON_WORDS[lower];
+      }
+      
+      // Simple character-by-character mapping
+      let phonemes = '';
+      for (const char of word) {
+        const lowerChar = char.toLowerCase();
+        if (LATIN_TO_IPA[lowerChar]) {
+          phonemes += LATIN_TO_IPA[lowerChar];
+        } else if (/[a-z]/.test(lowerChar)) {
+          phonemes += char;
+        } else if (/[.,!?;:'"]/.test(char)) {
+          phonemes += char;
+        }
+      }
+      return phonemes;
+    }).join(' ');
+  }
+
+  /**
+   * Tokenize text for model input
+   */
+  tokenize(text: string): number[] {
+    const phonemes = this.phonemize(text);
+    const tokens: number[] = [0]; // Start token
+    
+    // Simple character-based tokenization
+    for (const char of phonemes) {
+      tokens.push(char.charCodeAt(0));
+    }
+    
+    tokens.push(0); // End token
+    return tokens;
+  }
+
+  /**
+   * Generate audio from text
+   */
+  async synthesize(text: string, voiceId: string): Promise<Audio.Sound | null> {
+    if (!this.isModelLoaded || !this.session) {
+      console.error('Model not loaded. Call loadModel() first.');
+      return null;
     }
 
-    if (currentChunk) chunks.push(currentChunk.trim());
-  }
+    try {
+      // Load voice style
+      const styleData = await this.loadVoiceStyle(voiceId);
+      if (!styleData) {
+        console.error('Failed to load voice style');
+        return null;
+      }
 
-  return chunks;
-}
+      // Tokenize input
+      const tokens = this.tokenize(text);
+      const numTokens = Math.min(Math.max(tokens.length - 2, 0), 509);
 
-// ============ WAV Writer ============
-export function writeWavFile(audioData: number[], sampleRate: number): ArrayBuffer {
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
-  const blockAlign = numChannels * bitsPerSample / 8;
-  const dataSize = audioData.length * 2;
+      // Prepare input tensors
+      const inputs: Record<string, Tensor> = {};
+      inputs['input_ids'] = new Tensor('int64', new Int32Array(tokens), [1, tokens.length]);
+      inputs['style'] = new Tensor('float32', new Float32Array(styleData), [1, styleData.length]);
+      inputs['speed'] = new Tensor('float32', new Float32Array([1.0]), [1]);
 
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
+      console.log('Running inference...');
+      
+      // Run inference
+      const outputs = await this.session.run(inputs);
+      
+      if (!outputs || !outputs['waveform']) {
+        console.error('Invalid output from model inference');
+        return null;
+      }
 
-  const writeString = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
+      // Convert output to audio file
+      const waveform = outputs['waveform'].data;
+      const audioUri = await this.floatArrayToAudioFile(waveform);
+
+      // Create and return sound
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioUri },
+        { shouldPlay: false }
+      );
+
+      return sound;
+    } catch (error) {
+      console.error('Error synthesizing audio:', error);
+      return null;
     }
-  };
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  writeString(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  const int16Data = new Int16Array(audioData.length);
-  for (let i = 0; i < audioData.length; i++) {
-    const clamped = Math.max(-1.0, Math.min(1.0, audioData[i]));
-    int16Data[i] = Math.floor(clamped * 32767);
   }
 
-  new Uint8Array(buffer, 44).set(new Uint8Array(int16Data.buffer));
+  /**
+   * Convert Float32Array to WAV file
+   */
+  private async floatArrayToAudioFile(floatArray: Float32Array | Float64Array): Promise<string> {
+    const numSamples = floatArray.length;
+    const int16Array = new Int16Array(numSamples);
+    
+    // Convert to 16-bit PCM
+    for (let i = 0; i < numSamples; i++) {
+      const sample = floatArray[i];
+      int16Array[i] = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
+    }
 
-  return buffer;
-}
-
-// ============ Asset Loading ============
-let _cfgs: any = null;
-let _textProcessor: UnicodeProcessor | null = null;
-let _dpSession: ort.InferenceSession | null = null;
-let _textEncSession: ort.InferenceSession | null = null;
-let _vectorEstSession: ort.InferenceSession | null = null;
-let _vocoderSession: ort.InferenceSession | null = null;
-
-async function loadJson(uri: string): Promise<any> {
-  const response = await fetch(uri);
-  return response.json();
-}
-
-async function loadOnnx(uri: string): Promise<ort.InferenceSession> {
-  const sessOpts = new ort.SessionOptions();
-  return ort.InferenceSession.create(uri, sessOpts);
-}
-
-export async function initTTS(
-  basePath: string,
-  onProgress?: (name: string, current: number, total: number) => void
-): Promise<void> {
-  const sessOpts = new ort.SessionOptions();
-
-  if (onProgress) onProgress('Config', 1, 6);
-  _cfgs = await loadJson(`${basePath}/tts.json`);
-
-  if (onProgress) onProgress('Duration Predictor', 2, 6);
-  _dpSession = await loadOnnx(`${basePath}/duration_predictor.onnx`);
-
-  if (onProgress) onProgress('Text Encoder', 3, 6);
-  _textEncSession = await loadOnnx(`${basePath}/text_encoder.onnx`);
-
-  if (onProgress) onProgress('Vector Estimator', 4, 6);
-  _vectorEstSession = await loadOnnx(`${basePath}/vector_estimator.onnx`);
-
-  if (onProgress) onProgress('Vocoder', 5, 6);
-  _vocoderSession = await loadOnnx(`${basePath}/vocoder.onnx`);
-
-  if (onProgress) onProgress('Text Processor', 6, 6);
-  const indexer = await loadJson(`${basePath}/unicode_indexer.json`);
-  _textProcessor = new UnicodeProcessor(indexer);
-}
-
-export function getTTS(): TextToSpeech | null {
-  if (!_cfgs || !_textProcessor || !_dpSession || !_textEncSession || !_vectorEstSession || !_vocoderSession) {
-    return null;
+    // Create WAV buffer
+    const wavBuffer = this.createWavBuffer(int16Array, SAMPLE_RATE);
+    
+    // Convert to base64
+    const base64Data = this.arrayBufferToBase64(wavBuffer);
+    
+    // Save to temp file
+    const tempPath = `${FileSystem.cacheDirectory}temp_audio_${Date.now()}.wav`;
+    await FileSystem.writeAsStringAsync(tempPath, base64Data, { encoding: FileSystem.EncodingType.Base64 });
+    
+    return tempPath;
   }
-  return new TextToSpeech(_cfgs, _textProcessor, _dpSession, _textEncSession, _vectorEstSession, _vocoderSession);
+
+  private createWavBuffer(int16Array: Int16Array, sampleRate: number): ArrayBuffer {
+    const headerLength = 44;
+    const dataLength = int16Array.length * 2;
+    const buffer = new ArrayBuffer(headerLength + dataLength);
+    const view = new DataView(buffer);
+    
+    // RIFF header
+    view.setUint8(0, 0x52); view.setUint8(1, 0x49); // 'R', 'I'
+    view.setUint8(2, 0x46); view.setUint8(3, 0x46); // 'F', 'F'
+    view.setUint32(4, 36 + dataLength, true);
+    view.setUint8(8, 0x57); view.setUint8(9, 0x41); // 'W', 'A'
+    view.setUint8(10, 0x56); view.setUint8(11, 0x45); // 'V', 'E'
+    
+    // fmt chunk
+    view.setUint8(12, 0x66); view.setUint8(13, 0x6D); // 'f', 'm'
+    view.setUint8(14, 0x74); view.setUint8(15, 0x20); // 't', ' '
+    view.setUint32(16, 16, true); // chunk size
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate
+    view.setUint16(32, 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    
+    // data chunk
+    view.setUint8(36, 0x64); view.setUint8(37, 0x61); // 'd', 'a'
+    view.setUint8(38, 0x74); view.setUint8(39, 0x61); // 't', 'a'
+    view.setUint32(40, dataLength, true);
+    
+    // Write audio data
+    for (let i = 0; i < int16Array.length; i++) {
+      view.setInt16(headerLength + i * 2, int16Array[i], true);
+    }
+    
+    return buffer;
+  }
+
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  /**
+   * Check if model is loaded
+   */
+  isLoaded(): boolean {
+    return this.isModelLoaded;
+  }
+
+  /**
+   * Get current model ID
+   */
+  getCurrentModelId(): string | null {
+    return this.currentModelId;
+  }
 }
 
-export async function loadVoiceStyle(voiceStylePath: string): Promise<Style> {
-  const styleData = await loadJson(voiceStylePath);
-
-  const ttlData = styleData.style_ttl.data.flat(Infinity) as number[];
-  const dpData = styleData.style_dp.data.flat(Infinity) as number[];
-
-  const ttlTensor = new ort.Tensor('float32', new Float32Array(ttlData), styleData.style_ttl.dims);
-  const dpTensor = new ort.Tensor('float32', new Float32Array(dpData), styleData.style_dp.dims);
-
-  return new Style(ttlTensor, dpTensor);
-}
-
-export const TTS_BASE_PATH = '../assets/supertonic/onnx';
+// Export singleton instance
+const ttsEngine = new SupertonicTTS();
+export default ttsEngine;
+export { SupertonicTTS };
