@@ -75,12 +75,48 @@ jobs:
           npx expo prebuild --platform android --clean
           echo "android_generated=true" >> $GITHUB_ENV
 
+      # ─── Pre-bundle JS so it's definitely in the APK ──────────────────────────
+      - name: Bundle JS into APK assets
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.ts \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+          echo "--- JS bundle created ---"
+          ls -lh android/app/src/main/assets/
+
       # ─── Configure signing for release builds ─────────────────────────────────
       - name: Configure release signing
         if: env.BUILD_TYPE == 'release'
         run: |
-          # Generate a debug keystore for signing (replace with your own
-          # KEYSTORE_BASE64 + KEYSTORE_PASSWORD secrets for production releases)
+          # Build APK for arm64-v8a (most Android phones) + armeabi-v7a (older devices)
+          # This overrides any host-architecture-only build
+          if grep -q "ndk.abiFilters" android/app/build.gradle; then
+            echo "ABI filters already set"
+          else
+            sed -i '/defaultConfig {/,/}/ s/bundleInDebug/android { ndk { abiFilters "arm64-v8a", "armeabi-v7a" } }\n      bundleInDebug/' android/app/build.gradle 2>/dev/null || true
+            # Simpler approach: add ndk.abiFilters via append
+            python3 << 'EOF'
+            with open("android/app/build.gradle", "r") as f:
+                content = f.read()
+
+            if "ndk.abiFilters" not in content:
+                content = content.replace(
+                    "defaultConfig {",
+                    "defaultConfig {\n        ndk.abiFilters \"arm64-v8a\", \"armeabi-v7a\", \"x86_64\", \"x86\""
+                )
+                with open("android/app/build.gradle", "w") as f:
+                    f.write(content)
+                print("Added ndk.abiFilters")
+            else:
+                print("ndk.abiFilters already present")
+            EOF
+          fi
+
+          # Generate a debug keystore for signing
           keytool \
             -genkeypair \
             -v \
@@ -138,6 +174,13 @@ jobs:
           if [ ! -f "$APK_OUT" ]; then
             echo "::error::APK not found at $APK_OUT"
             exit 1
+          fi
+
+          echo "--- Verifying JS bundle in APK ---"
+          if unzip -l "$APK_OUT" 2>/dev/null | grep -q "index.android.bundle"; then
+            echo "✓ JS bundle confirmed in APK"
+          else
+            echo "✗ WARNING: JS bundle not detected in APK listing"
           fi
 
           echo "apk_path=$APK_OUT" >> $GITHUB_OUTPUT
