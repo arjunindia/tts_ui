@@ -38,14 +38,20 @@ export default function App() {
 
   // Handle Android hardware back button
   useEffect(() => {
+    console.log('[App] BackHandler registering, currentScreen=', currentScreen);
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      console.log('[App] BackHandler fired, currentScreen=', currentScreen);
       if (currentScreen === 'chat') {
+        console.log('[App] Navigating home from chat');
         setCurrentScreen('home');
         return true; // prevent default
       }
       return false;
     });
-    return () => backHandler.remove();
+    return () => {
+      console.log('[App] BackHandler removing');
+      backHandler.remove();
+    };
   }, [currentScreen]);
 
   // Initialize TTS on app start

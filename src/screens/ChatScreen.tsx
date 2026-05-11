@@ -80,9 +80,13 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
   };
 
   // Visual state mirror — updates instantly when setInputText is called
-  const handleTextChange = (t: string) => setInputText(t);
+  const handleTextChange = (t: string) => {
+    console.log('[ChatScreen] handleTextChange:', t.length, 'chars, generating:', isGenerating);
+    setInputText(t);
+  };
 
   const handleSend = useCallback(async () => {
+    console.log('[ChatScreen] handleSend called, inputText.length:', inputText.length, 'isGenerating:', isGenerating);
     if (!inputText.trim() || isGenerating) return;
 
     const userMessage: Message = {
