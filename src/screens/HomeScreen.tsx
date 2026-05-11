@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Voice, Message } from '../types';
 import { pinterestColors, pinterestSpacing, pinterestRounded, pinterestTypography } from '../theme/pinterest';
-import { Avatar } from './Avatar';
+import { Avatar } from '../components/Avatar';
 
 const CRASH_LOG_PATH = (FileSystem.documentDirectory ?? '') + 'crash.log';
 
