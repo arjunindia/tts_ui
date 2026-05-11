@@ -1,5 +1,6 @@
 export const pinterestColors = {
   primary: '#e60023',
+  'primary-light': 'rgba(230, 0, 35, 0.1)',
   'on-primary': '#ffffff',
   'primary-pressed': '#cc001f',
   ink: '#000000',
@@ -32,6 +33,14 @@ export const pinterestRounded = {
   md: 16,
   lg: 32,
   full: 9999,
+};
+
+export const pinterestTypography = {
+  caption: { fontSize: 12, lineHeight: 16 },
+  body: { fontSize: 14, lineHeight: 20 },
+  button: { fontSize: 14, fontWeight: '600' as const },
+  headline: { fontSize: 20, fontWeight: '700' as const },
+  subhead: { fontSize: 16, fontWeight: '500' as const },
 };
 
 export const pinterestSpacing = {

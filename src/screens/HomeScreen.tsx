@@ -170,7 +170,7 @@ export function HomeScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: pinterestColors.background,
+    backgroundColor: pinterestColors.canvas,
   },
   header: {
     paddingHorizontal: pinterestSpacing.lg,
@@ -178,13 +178,13 @@ const styles = StyleSheet.create({
     paddingBottom: pinterestSpacing.lg,
   },
   title: {
-    ...pinterestTypography.heading,
-    color: pinterestColors.textPrimary,
+    ...pinterestTypography.headline,
+    color: pinterestColors.ink,
     marginBottom: pinterestSpacing.xs,
   },
   subtitle: {
     ...pinterestTypography.body,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
   errorContainer: {
     marginHorizontal: pinterestSpacing.lg,
@@ -219,12 +219,12 @@ const styles = StyleSheet.create({
   progressText: {
     marginTop: pinterestSpacing.sm,
     ...pinterestTypography.caption,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
   progressBar: {
     width: '100%',
     height: 6,
-    backgroundColor: pinterestColors.border,
+    backgroundColor: pinterestColors.hairline,
     borderRadius: 3,
     marginTop: pinterestSpacing.sm,
     overflow: 'hidden',
@@ -238,8 +238,8 @@ const styles = StyleSheet.create({
     marginBottom: pinterestSpacing.lg,
   },
   sectionTitle: {
-    ...pinterestTypography.subheading,
-    color: pinterestColors.textPrimary,
+    ...pinterestTypography.subhead,
+    color: pinterestColors.ink,
     marginBottom: pinterestSpacing.md,
   },
   voiceList: {
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
   },
   selectedVoiceCard: {
     borderColor: pinterestColors.primary,
-    backgroundColor: pinterestColors.primaryLight,
+    backgroundColor: pinterestColors['primary-light'],
   },
   voiceEmoji: {
     fontSize: 32,
@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   },
   voiceName: {
     ...pinterestTypography.caption,
-    color: pinterestColors.textPrimary,
+    color: pinterestColors.ink,
     fontWeight: '500',
   },
   selectedVoiceName: {
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   },
   selectedLabel: {
     ...pinterestTypography.body,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
   selectedValue: {
     ...pinterestTypography.body,
@@ -301,11 +301,11 @@ const styles = StyleSheet.create({
     marginBottom: pinterestSpacing.lg,
   },
   startButtonDisabled: {
-    backgroundColor: pinterestColors.textTertiary,
+    backgroundColor: pinterestColors.ash,
   },
   startButtonText: {
     ...pinterestTypography.button,
-    color: pinterestColors.onPrimary,
+    color: pinterestColors['on-primary'],
   },
   statusContainer: {
     flexDirection: 'row',
@@ -327,6 +327,6 @@ const styles = StyleSheet.create({
   },
   statusText: {
     ...pinterestTypography.caption,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
 });

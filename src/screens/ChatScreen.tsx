@@ -15,7 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { Message, Voice } from '../types';
 import { pinterestColors, pinterestSpacing, pinterestTypography } from '../theme/pinterest';
-import ttsEngine from '../utils/ttsEngine';
+import ttsEngine, { VoiceId } from '../utils/ttsEngine';
 
 interface ChatScreenProps {
   voice: Voice;
@@ -79,6 +79,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
       role: 'user',
       text: inputText.trim(),
       status: 'done',
+      timestamp: new Date(),
     };
 
     setMessages(prev => [...prev, userMessage]);
@@ -92,12 +93,13 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
       role: 'assistant',
       text: '',
       status: 'pending',
+      timestamp: new Date(),
     };
     setMessages(prev => [...prev, assistantMessage]);
 
     try {
       // Generate TTS audio
-      const sound = await ttsEngine.synthesize(userMessage.text, voice.id);
+      const sound = await ttsEngine.synthesize(userMessage.text, voice.id as VoiceId);
       
       if (sound) {
         // Get audio URI
@@ -151,10 +153,11 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
       role: 'assistant',
       text: '',
       status: 'pending',
+      timestamp: new Date(),
     };
     setMessages(prev => [...prev, assistantMessage]);
 
-    ttsEngine.synthesize(userMessage.text, voice.id)
+    ttsEngine.synthesize(userMessage.text, voice.id as VoiceId)
       .then(async (sound) => {
         if (sound) {
           const status = await sound.getStatusAsync();
@@ -288,7 +291,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
             value={inputText}
             onChangeText={setInputText}
             placeholder="Type a message..."
-            placeholderTextColor={pinterestColors.textTertiary}
+            placeholderTextColor={pinterestColors.mute}
             multiline
             maxLength={500}
           />
@@ -308,7 +311,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: pinterestColors.background,
+    backgroundColor: pinterestColors.canvas,
   },
   header: {
     flexDirection: 'row',
@@ -318,7 +321,7 @@ const styles = StyleSheet.create({
     paddingVertical: pinterestSpacing.md,
     backgroundColor: pinterestColors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: pinterestColors.border,
+    borderBottomColor: pinterestColors.hairline,
   },
   backButton: {
     width: 40,
@@ -328,18 +331,18 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: 24,
-    color: pinterestColors.textPrimary,
+    color: pinterestColors.ink,
   },
   headerInfo: {
     alignItems: 'center',
   },
   headerTitle: {
-    ...pinterestTypography.subheading,
-    color: pinterestColors.textPrimary,
+    ...pinterestTypography.subhead,
+    color: pinterestColors.ink,
   },
   headerSubtitle: {
     ...pinterestTypography.caption,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
   headerPlaceholder: {
     width: 40,
@@ -353,6 +356,7 @@ const styles = StyleSheet.create({
   },
   userMessageContainer: {
     alignItems: 'flex-end',
+    flexDirection: 'row-reverse',
   },
   assistantMessageContainer: {
     alignItems: 'flex-start',
@@ -361,9 +365,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     maxWidth: '80%',
-  },
-  userMessageContainer: {
-    flexDirection: 'row-reverse',
   },
   avatar: {
     width: 36,
@@ -377,7 +378,7 @@ const styles = StyleSheet.create({
     backgroundColor: pinterestColors.primary,
   },
   assistantAvatar: {
-    backgroundColor: pinterestColors.secondary,
+    backgroundColor: pinterestColors.canvas,
   },
   avatarText: {
     fontSize: 18,
@@ -390,6 +391,7 @@ const styles = StyleSheet.create({
   userBubble: {
     backgroundColor: pinterestColors.primary,
     borderBottomRightRadius: 4,
+    color: pinterestColors['on-primary'],
   },
   assistantBubble: {
     backgroundColor: pinterestColors.surface,
@@ -397,10 +399,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     ...pinterestTypography.body,
-    color: pinterestColors.textPrimary,
-  },
-  userBubble: {
-    color: pinterestColors.onPrimary,
+    color: pinterestColors.ink,
   },
   audioPlayer: {
     flexDirection: 'row',
@@ -444,7 +443,7 @@ const styles = StyleSheet.create({
   },
   audioLabel: {
     ...pinterestTypography.caption,
-    color: pinterestColors.textSecondary,
+    color: pinterestColors.mute,
   },
   loadingContainer: {
     flexDirection: 'row',
@@ -452,7 +451,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...pinterestTypography.caption,
-    color: pinterestColors.textTertiary,
+    color: pinterestColors.mute,
   },
   errorLabel: {
     ...pinterestTypography.caption,
@@ -463,12 +462,12 @@ const styles = StyleSheet.create({
     padding: pinterestSpacing.md,
     backgroundColor: pinterestColors.surface,
     borderTopWidth: 1,
-    borderTopColor: pinterestColors.border,
+    borderTopColor: pinterestColors.hairline,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: pinterestColors.background,
+    backgroundColor: pinterestColors.canvas,
     borderRadius: pinterestSpacing.lg,
     paddingHorizontal: pinterestSpacing.md,
     paddingVertical: pinterestSpacing.sm,
@@ -476,7 +475,7 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     ...pinterestTypography.body,
-    color: pinterestColors.textPrimary,
+    color: pinterestColors.ink,
     maxHeight: 100,
     paddingVertical: pinterestSpacing.xs,
   },
@@ -488,10 +487,10 @@ const styles = StyleSheet.create({
     marginLeft: pinterestSpacing.sm,
   },
   sendButtonDisabled: {
-    backgroundColor: pinterestColors.textTertiary,
+    backgroundColor: pinterestColors.mute,
   },
   sendButtonText: {
     ...pinterestTypography.button,
-    color: pinterestColors.onPrimary,
+    color: pinterestColors['on-primary'],
   },
 });

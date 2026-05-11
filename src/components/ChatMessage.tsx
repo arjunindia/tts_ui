@@ -163,11 +163,11 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     backgroundColor: pinterestColors.primary,
-    borderBottomRightRadius: pinterestRounded.xs,
+    borderBottomRightRadius: pinterestRounded.sm,
   },
   assistantBubble: {
     backgroundColor: pinterestColors.fill,
-    borderBottomLeftRadius: pinterestRounded.xs,
+    borderBottomLeftRadius: pinterestRounded.sm,
   },
   pendingBubble: {
     backgroundColor: pinterestColors.fill,

@@ -41,7 +41,7 @@ export default function App() {
       setError(null);
       
       // Check if model is already cached
-      const isLoaded = ttsEngine.isLoaded();
+      const isLoaded = ttsEngine.isModelLoaded();
       if (isLoaded) {
         setIsModelLoaded(true);
         return;

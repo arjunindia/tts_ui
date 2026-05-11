@@ -11,4 +11,5 @@ export interface Voice {
   id: string;
   name: string;
   gender: 'male' | 'female';
+  avatar?: string; // optional emoji or image URI
 }
