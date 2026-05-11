@@ -337,9 +337,8 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
 
         {/* Input — lifts above keyboard */}
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
           keyboardVerticalOffset={0}
-          style={styles.kav}
         >
           <View style={styles.inputRow}>
             <View style={styles.inputWrapper}>
@@ -553,16 +552,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   // ── Input ─────────────────────────────────────────────────────────────────
-  kav: {
-    // No extra constraints — lets KAV adjust height freely on Android
-  },
   inputRow: {
     backgroundColor: pinterestColors.canvas,
     borderTopWidth: 1,
     borderTopColor: pinterestColors.hairline,
     paddingHorizontal: pinterestSpacing.lg,
     paddingVertical: pinterestSpacing.md,
-    flex: 1,
   },
   inputWrapper: {
     flexDirection: 'row',
