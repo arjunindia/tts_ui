@@ -13,13 +13,9 @@ on:
         options:
           - preview
           - production
-      tag:
-        description: 'Release tag (leave empty to skip release creation)'
-        required: false
-        type: string
 
 env:
-  EAS_PROFILE: ${{ github.event.inputs.profile || 'preview' }}
+  EAS_PROFILE: ${{ github.event.inputs.profile || 'production' }}
 
 jobs:
   build:
@@ -27,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,48 +99,45 @@ jobs:
           echo "apk_size=$(du -h $APK | cut -f1)" >> $GITHUB_OUTPUT
           ls -lh "$APK"
 
-      # ─── Meta (tag/version) ───────────────────────────────────────────────────
-      - name: Set release metadata
-        id: meta
+      # ─── Version from package.json ─────────────────────────────────────────────
+      - name: Get version
+        id: version
         run: |
-          TAG="${{ github.event.inputs.tag }}"
-          if [ -z "$TAG" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          elif [ -n "$TAG" ]; then
-            :  # use dispatch input
-          else
-            TAG="v$(cat package.json | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])')"
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "apk_name=tts_ui-$TAG-android.apk" >> $GITHUB_OUTPUT
-          echo "release_title=TTS UI $TAG" >> $GITHUB_OUTPUT
-          echo "Using tag: $TAG"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}-$(echo '${{ github.sha }}' | cut -c1-7)" >> $GITHUB_OUTPUT
+          echo "release_title=TTS UI v${VERSION} ($(echo '${{ github.sha }}' | cut -c1-7}))" >> $GITHUB_OUTPUT
+          echo "Using version: $VERSION"
 
       # ─── Upload artifact ──────────────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tts_ui-android-apk
+          name: tts_ui-android-apk-v${{ steps.version.outputs.version }}
           path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ─── GitHub Release ───────────────────────────────────────────────────────
+      # ─── GitHub Release (auto on push to main) ────────────────────────────────
       - name: Create GitHub Release
-        if: steps.meta.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.release_title }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.release_title }}
           body: |
             ## TTS UI — Android APK
 
+            **Version:** `${{ steps.version.outputs.version }}`
             **Profile:** `${{ env.EAS_PROFILE }}`
             **Commit:** `${{ github.sha }}`
+            **Branch:** `${{ github.ref_name }}`
             **Built by:** EAS local build (GitHub Actions)
 
+            ### Install
             Download the APK below and install it on your Android device.
+            Enable "Install from unknown sources" in your device settings if prompted.
           files: ${{ steps.apk.outputs.apk_path }}
           draft: false
           prerelease: ${{ env.EAS_PROFILE == 'preview' }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

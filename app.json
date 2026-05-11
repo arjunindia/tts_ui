@@ -31,7 +31,26 @@
       }
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libreactnative.so",
+                "**/libfbjni.so",
+                "**/libc++_shared.so",
+                "**/libjsi.so",
+                "**/libfolly_runtime.so",
+                "**/libglog.so",
+                "**/libfmt.so",
+                "**/libreactnativejni.so"
+              ]
+            }
+          }
+        }
+      ]
     ]
   }
 }
