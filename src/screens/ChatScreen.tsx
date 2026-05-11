@@ -89,9 +89,11 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
     }
   };
 
+  // Visual state mirror — updates instantly when setInputText is called
+  const [displayText, setDisplayText] = useState('');
+
   const handleSend = useCallback(async () => {
     // TODO: remove debug log after testing
-    console.log('[Chat] handleSend called', { inputText: JSON.stringify(inputText), inputTextLen: inputText.length, isGenerating });
     if (!inputText.trim() || isGenerating) return;
 
     const userMessage: Message = {
@@ -355,8 +357,8 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
                 style={styles.textInput}
                 value={inputText}
                 onChangeText={(t) => {
-                  console.log('[DEBUG] onChangeText called with:', JSON.stringify(t));
                   setInputText(t);
+                  setDisplayText(t);
                 }}
                 placeholder="Type a message…"
                 placeholderTextColor={pinterestColors.ash}
@@ -381,7 +383,7 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
             </View>
             {/* DEBUG — remove after testing */}
             <Text style={styles.debugText}>
-              text="{inputText}" | generating={String(isGenerating)} | disabled={String(!inputText.trim() || isGenerating)}
+              [{Date.now() % 100000}] input="{inputText}" | display="{displayText}" | gen={String(isGenerating)} | disabled={String(!inputText.trim() || isGenerating)}
             </Text>
           </View>
         </KeyboardAvoidingView>
