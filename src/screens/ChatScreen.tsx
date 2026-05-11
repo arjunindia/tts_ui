@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,15 +47,6 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
     };
   }, []);
 
-  // Hardware back button — go back to home
-  useEffect(() => {
-    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => handler.remove();
-  }, [onBack]);
-
   const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const stopCurrentAudio = async () => {
@@ -90,10 +80,9 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
   };
 
   // Visual state mirror — updates instantly when setInputText is called
-  const [displayText, setDisplayText] = useState('');
+  const handleTextChange = (t: string) => setInputText(t);
 
   const handleSend = useCallback(async () => {
-    // TODO: remove debug log after testing
     if (!inputText.trim() || isGenerating) return;
 
     const userMessage: Message = {
@@ -350,16 +339,14 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           keyboardVerticalOffset={0}
+          style={styles.kav}
         >
           <View style={styles.inputRow}>
             <View style={styles.inputWrapper}>
               <TextInput
                 style={styles.textInput}
                 value={inputText}
-                onChangeText={(t) => {
-                  setInputText(t);
-                  setDisplayText(t);
-                }}
+                onChangeText={handleTextChange}
                 placeholder="Type a message…"
                 placeholderTextColor={pinterestColors.ash}
                 multiline
@@ -381,10 +368,6 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
                 />
               </TouchableOpacity>
             </View>
-            {/* DEBUG — remove after testing */}
-            <Text style={styles.debugText}>
-              [{Date.now() % 100000}] input="{inputText}" | display="{displayText}" | gen={String(isGenerating)} | disabled={String(!inputText.trim() || isGenerating)}
-            </Text>
           </View>
         </KeyboardAvoidingView>
       </View>
@@ -570,12 +553,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   // ── Input ─────────────────────────────────────────────────────────────────
+  kav: {
+    // No extra constraints — lets KAV adjust height freely on Android
+  },
   inputRow: {
     backgroundColor: pinterestColors.canvas,
     borderTopWidth: 1,
     borderTopColor: pinterestColors.hairline,
     paddingHorizontal: pinterestSpacing.lg,
     paddingVertical: pinterestSpacing.md,
+    flex: 1,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -605,10 +592,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: pinterestColors.stone,
-  },
-  debugText: {
-    fontSize: 10,
-    color: 'red',
-    marginTop: 4,
   },
 });
