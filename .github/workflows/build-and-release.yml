@@ -6,29 +6,30 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: 'EAS build profile'
+        description: 'Build type'
         required: true
-        default: 'production'
+        default: 'release'
         type: choice
         options:
-          - preview
-          - production
+          - debug
+          - release
       tag:
-        description: 'Release tag (e.g. v1.0.0)'
+        description: 'Release tag (e.g. v1.0.0, leave empty to skip release)'
         required: false
         type: string
 
 env:
-  EAS_PROFILE: ${{ github.event.inputs.profile || 'production' }}
+  BUILD_TYPE: ${{ github.event.inputs.profile || 'release' }}
 
 jobs:
   build:
-    name: EAS Build (Android)
+    name: Build Android APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ─── Node.js ───────────────────────────────────────────────────────────────
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -38,150 +39,139 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+      # ─── Android SDK ──────────────────────────────────────────────────────────
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: EAS Build
-        id: eas
+      # ─── Java ─────────────────────────────────────────────────────────────────
+      - name: Setup Java (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set environment variables
         run: |
-          echo "Starting EAS build with profile: $EAS_PROFILE"
-          eas build \
-            --platform android \
-            --profile "$EAS_PROFILE" \
-            --non-interactive \
-            --json \
-            --message "GitHub Actions build from ${{ github.sha }}" \
-            > eas_build.json
-          echo "--- EAS Output ---"
-          cat eas_build.json
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
 
-          # Extract build metadata
-          python3 << 'EOF'
-          import json, sys, os
+      - name: Accept Android licenses
+        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
 
-          with open("eas_build.json") as f:
-              data = json.load(f)
+      - name: Install Android platform & build tools
+        run: |
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
 
-          build = data[0]
-          build_id = build.get("id", "")
-          build_url = build.get("expoUrl", "")
-          build_status = build.get("status", "unknown")
+      # ─── Generate native Android project ──────────────────────────────────────
+      - name: Expo prebuild
+        run: |
+          npx expo prebuild --platform android --clean
+          echo "android_generated=true" >> $GITHUB_ENV
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"build_id={build_id}\n")
-              out.write(f"build_url={build_url}\n")
-              out.write(f"build_status={build_status}\n")
+      # ─── Configure signing for release builds ─────────────────────────────────
+      - name: Configure release signing
+        if: env.BUILD_TYPE == 'release'
+        run: |
+          # Generate a debug keystore for signing (replace with your own
+          # KEYSTORE_BASE64 + KEYSTORE_PASSWORD secrets for production releases)
+          keytool \
+            -genkeypair \
+            -v \
+            -storetype PKCS12 \
+            -keystore android/app/ttsui-release.keystore \
+            -alias ttsui \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD || 'android' }}" \
+            -keypass "${{ secrets.KEYSTORE_PASSWORD || 'android' }}" \
+            -dname "CN=tts_ui, OU=Dev, O=Dev, L=City, ST=State, C=US"
 
-          print(f"BUILD_ID={build_id}")
-          print(f"BUILD_STATUS={build_status}")
-          print(f"BUILD_URL={build_url}")
-          EOF
+          cat >> android/app/build.gradle << 'GRADLE'
 
-      - name: Set outputs
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file("ttsui-release.keystore")
+                      storePassword "${{ secrets.KEYSTORE_PASSWORD || 'android' }}"
+                      keyAlias "ttsui"
+                      keyPassword "${{ secrets.KEYSTORE_PASSWORD || 'android' }}"
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+          }
+          GRADLE
+
+      # ─── Build APK ────────────────────────────────────────────────────────────
+      - name: Build APK
+        id: gradle
+        run: |
+          if [ "${{ env.BUILD_TYPE }}" = "release" ]; then
+            BUILD_TASK="assembleRelease"
+            APK_OUT="android/app/build/outputs/apk/release/app-release.apk"
+          else
+            BUILD_TASK="assembleDebug"
+            APK_OUT="android/app/build/outputs/apk/debug/app-debug.apk"
+          fi
+
+          echo "Running Gradle task: $BUILD_TASK"
+          echo "APK_OUTPUT=$APK_OUT" >> $GITHUB_ENV
+
+          cd android
+          ./gradlew $BUILD_TASK --no-daemon --warning-mode=all
+          cd ..
+
+          echo "--- APK files ---"
+          find android -name "*.apk" -type f 2>/dev/null
+
+          if [ ! -f "$APK_OUT" ]; then
+            echo "::error::APK not found at $APK_OUT"
+            exit 1
+          fi
+
+          echo "apk_path=$APK_OUT" >> $GITHUB_OUTPUT
+          echo "APK size: $(du -h $APK_OUT | cut -f1)"
+
+      # ─── Rename APK with version ──────────────────────────────────────────────
+      - name: Rename APK
         id: meta
         run: |
-          # Determine release tag
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-          else
+          fi
+          if [ -z "$TAG" ]; then
             TAG="v$(cat package.json | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])')"
           fi
+
+          PROFILE="${{ env.BUILD_TYPE }}"
+          NEW_APK="tts_ui-$TAG-$PROFILE.apk"
+          cp "${{ env.APK_OUTPUT }}" "$NEW_APK"
+          echo "Final APK: $NEW_APK"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "release_title=Release $TAG" >> $GITHUB_OUTPUT
-          echo "Using tag: $TAG"
+          echo "apk_name=$NEW_APK" >> $GITHUB_OUTPUT
+          echo "release_title=TTS UI $TAG ($PROFILE)" >> $GITHUB_OUTPUT
 
-      # ─── Poll for build completion ────────────────────────────────────────────
-      - name: Wait for build to finish
-        if: steps.eas.outputs.build_status == 'pending'
-        run: |
-          echo "Build is pending — polling EAS for completion..."
-          BUILD_ID="${{ steps.eas.outputs.build_id }}"
-          MAX_WAIT=2700   # 45 min max
-          INTERVAL=90
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-            STATUS=$(eas build:$BUILD_ID --json 2>/dev/null | \
-              python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['status'])")
-            echo "[${ELAPSED}s] Build status: $STATUS"
-            if [ "$STATUS" = "finished" ]; then
-              echo "build_status=finished" >> $GITHUB_OUTPUT
-              exit 0
-            elif [ "$STATUS" = "errored" ]; then
-              echo "build_status=errored" >> $GITHUB_OUTPUT
-              echo "::error::EAS Build errored. Check: ${{ steps.eas.outputs.build_url }}"
-              exit 1
-            elif [ "$STATUS" = "canceled" ]; then
-              echo "build_status=canceled" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          done
-          echo "::warning::Timed out waiting for build"
-
-      # ─── Fetch finished build details ───────────────────────────────────────
-      - name: Get finished build details
-        id: details
-        run: |
-          BUILD_ID="${{ steps.eas.outputs.build_id }}"
-          if [ -z "$BUILD_ID" ]; then
-            echo "No build ID found — skipping details"
-            exit 0
-          fi
-          eas build:$BUILD_ID --json > build_details.json 2>&1 || true
-          echo "--- Build Details ---"
-          cat build_details.json
-
-          python3 << 'EOF'
-          import json, os
-
-          try:
-              with open("build_details.json") as f:
-                  raw = f.read()
-                  data = json.loads(raw) if raw.strip().startswith("[") else []
-
-              if not data:
-                  print("Could not parse build details JSON")
-                  exit(0)
-
-              build = data[0]
-              status = build.get("status", "unknown")
-              apk_url = build.get("artifacts", {}).get("android", "")
-              build_url = build.get("expoUrl", build.get("webUrl", ""))
-
-              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                  out.write(f"apk_url={apk_url}\n")
-                  out.write(f"build_url={build_url}\n")
-                  out.write(f"status={status}\n")
-
-              print(f"Status: {status}")
-              print(f"APK URL: {apk_url}")
-              print(f"Build URL: {build_url}")
-          except Exception as e:
-              print(f"Error parsing details: {e}")
-          EOF
-
-      # ─── Download APK ────────────────────────────────────────────────────────
-      - name: Download APK
-        if: steps.details.outputs.apk_url
-        run: |
-          echo "Downloading APK from: ${{ steps.details.outputs.apk_url }}"
-          curl -L -o app-release.apk "${{ steps.details.outputs.apk_url }}"
-          ls -lh app-release.apk
-
+      # ─── Upload APK artifact ──────────────────────────────────────────────────
       - name: Upload APK artifact
-        if: steps.details.outputs.apk_url
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk-${{ steps.meta.outputs.tag }}
-          path: app-release.apk
+          name: tts_ui-android-apk
+          path: ${{ steps.meta.outputs.apk_name }}
           retention-days: 30
 
       # ─── Create GitHub Release ───────────────────────────────────────────────
       - name: Create GitHub Release
+        if: steps.meta.outputs.tag != ''
         id: release
         uses: softprops/action-gh-release@v2
         with:
@@ -190,24 +180,16 @@ jobs:
           body: |
             ## TTS UI — Android APK
 
-            **Profile:** `${{ env.EAS_PROFILE }}`
+            **Build type:** `${{ env.BUILD_TYPE }}`
             **Commit:** `${{ github.sha }}`
-            **EAS Build ID:** `${{ steps.eas.outputs.build_id }}`
-            **EAS Build Status:** `${{ steps.details.outputs.status || steps.eas.outputs.build_status }}`
+            **Generated by:** GitHub Actions (local Android SDK)
 
-            ### Download APK
-            Direct download: ${{ steps.details.outputs.apk_url || steps.eas.outputs.build_url }}
+            ### What's in this release
+            Android APK built directly in GitHub Actions runners — no cloud build service required.
 
-            ### Expo Dashboard
-            View build details: ${{ steps.eas.outputs.build_url }}
-          artifacts: ${{ steps.details.outputs.apk_url && 'app-release.apk' || '' }}
+            Download the APK below and install it on your Android device.
+          artifacts: ${{ steps.meta.outputs.apk_name }}
           draft: false
-          prerelease: ${{ env.EAS_PROFILE == 'preview' }}
+          prerelease: ${{ env.BUILD_TYPE == 'debug' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Fail on error
-        if: steps.eas.outputs.build_status == 'errored' || steps.details.outputs.status == 'errored'
-        run: |
-          echo "::error::Build failed. Check: ${{ steps.eas.outputs.build_url }}"
-          exit 1
