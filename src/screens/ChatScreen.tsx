@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -47,6 +48,15 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
     };
   }, []);
 
+  // Hardware back button — go back to home
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      onBack();
+      return true;
+    });
+    return () => handler.remove();
+  }, [onBack]);
+
   const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const stopCurrentAudio = async () => {
@@ -80,6 +90,8 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
   };
 
   const handleSend = useCallback(async () => {
+    // TODO: remove debug log after testing
+    console.log('[Chat] handleSend called', { inputTextLen: inputText.length, isGenerating });
     if (!inputText.trim() || isGenerating) return;
 
     const userMessage: Message = {
@@ -316,53 +328,57 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
       {/* Divider */}
       <View style={styles.headerDivider} />
 
-      {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[
-          styles.messagesList,
-          messages.length === 0 && styles.messagesListEmpty,
-        ]}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
-        ListEmptyComponent={renderEmptyChat}
-      />
+      {/* Messages + Input — flex column so KAV can push input above keyboard */}
+      <View style={styles.body}>
+        {/* Messages */}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={[
+            styles.messagesList,
+            messages.length === 0 && styles.messagesListEmpty,
+          ]}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+          ListEmptyComponent={renderEmptyChat}
+        />
 
-      {/* Input — lifts above keyboard */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-        keyboardVerticalOffset={0}
-        style={styles.inputContainer}
-      >
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.textInput}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Type a message…"
-            placeholderTextColor={pinterestColors.ash}
-            multiline
-            maxLength={500}
-          />
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              (!inputText.trim() || isGenerating) && styles.sendButtonDisabled,
-            ]}
-            onPress={handleSend}
-            disabled={!inputText.trim() || isGenerating}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name="send"
-              size={18}
-              color={pinterestColors['on-primary']}
-            />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+        {/* Input — lifts above keyboard */}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+        >
+          <View style={styles.inputRow}>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.textInput}
+                value={inputText}
+                onChangeText={setInputText}
+                placeholder="Type a message…"
+                placeholderTextColor={pinterestColors.ash}
+                multiline
+                maxLength={500}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  (!inputText.trim() || isGenerating) && styles.sendButtonDisabled,
+                ]}
+                onPress={handleSend}
+                disabled={!inputText.trim() || isGenerating}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="send"
+                  size={18}
+                  color={pinterestColors['on-primary']}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -371,6 +387,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: pinterestColors.canvas,
+  },
+  body: {
+    flex: 1,
   },
   // ── Header ─────────────────────────────────────────────────────────────────
   header: {
@@ -542,10 +561,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   // ── Input ─────────────────────────────────────────────────────────────────
-  inputContainer: {
+  inputRow: {
     backgroundColor: pinterestColors.canvas,
     borderTopWidth: 1,
     borderTopColor: pinterestColors.hairline,
+    paddingHorizontal: pinterestSpacing.lg,
+    paddingVertical: pinterestSpacing.md,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -554,11 +575,11 @@ const styles = StyleSheet.create({
     borderRadius: pinterestRounded.full,
     paddingHorizontal: pinterestSpacing.md,
     paddingVertical: pinterestSpacing.sm,
-    marginHorizontal: pinterestSpacing.lg,
-    marginVertical: pinterestSpacing.md,
   },
   textInput: {
     flex: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     ...pinterestTypography.body,
     color: pinterestColors.ink,
     maxHeight: 100,
