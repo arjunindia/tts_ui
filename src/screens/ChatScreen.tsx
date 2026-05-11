@@ -376,6 +376,10 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
                 />
               </TouchableOpacity>
             </View>
+            {/* DEBUG — remove after testing */}
+            <Text style={styles.debugText}>
+              text="{inputText}" | generating={String(isGenerating)} | disabled={String(!inputText.trim() || isGenerating)}
+            </Text>
           </View>
         </KeyboardAvoidingView>
       </View>
@@ -596,5 +600,10 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: pinterestColors.stone,
+  },
+  debugText: {
+    fontSize: 10,
+    color: 'red',
+    marginTop: 4,
   },
 });
