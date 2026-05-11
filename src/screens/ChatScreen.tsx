@@ -10,25 +10,33 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { Message, Voice } from '../types';
-import { pinterestColors, pinterestSpacing, pinterestTypography } from '../theme/pinterest';
+import { pinterestColors, pinterestSpacing, pinterestRounded, pinterestTypography } from '../theme/pinterest';
 import ttsEngine, { VoiceId } from '../utils/ttsEngine';
+import { Avatar } from '../components/Avatar';
 
 interface ChatScreenProps {
   voice: Voice;
   onBack: () => void;
+  onMessagesChange?: (messages: Message[]) => void;
 }
 
-export function ChatScreen({ voice, onBack }: ChatScreenProps) {
+export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const flatListRef = useRef<FlatList>(null);
+
+  // Sync messages up to App so HomeScreen can show last-message previews
+  useEffect(() => {
+    onMessagesChange?.(messages);
+  }, [messages, onMessagesChange]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -52,7 +60,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
 
   const playAudio = async (messageId: string, audioUri: string) => {
     await stopCurrentAudio();
-    
+
     try {
       const { sound } = await Audio.Sound.createAsync(
         { uri: audioUri },
@@ -100,7 +108,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
     try {
       // Generate TTS audio
       const sound = await ttsEngine.synthesize(userMessage.text, voice.id as VoiceId);
-      
+
       if (sound) {
         // Get audio URI
         const status = await sound.getStatusAsync();
@@ -113,7 +121,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
                 : msg
             )
           );
-          
+
           // Play the audio
           await playAudio(assistantMessageId, status.uri);
         }
@@ -146,7 +154,7 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
 
     // Re-generate
     setIsGenerating(true);
-    
+
     const assistantMessageId = generateId();
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -203,72 +211,110 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
         delayLongPress={500}
         activeOpacity={0.7}
       >
-        <View style={styles.messageContent}>
-          {/* Avatar */}
-          <View style={[styles.avatar, isUser ? styles.userAvatar : styles.assistantAvatar]}>
-            <Text style={styles.avatarText}>
-              {isUser ? '👤' : '🔊'}
-            </Text>
+        {/* Avatar (only for assistant) */}
+        {!isUser && (
+          <View style={styles.assistantAvatarWrapper}>
+            <Avatar voice={voice} size={32} />
           </View>
+        )}
 
-          {/* Message body */}
-          <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-            {isUser ? (
-              <Text style={styles.messageText}>{item.text}</Text>
-            ) : (
-              <>
-                {item.audioUri ? (
-                  <TouchableOpacity
-                    style={styles.audioPlayer}
-                    onPress={() => isPlaying ? stopCurrentAudio() : playAudio(item.id, item.audioUri!)}
-                  >
-                    <View style={styles.playButton}>
-                      <Text style={styles.playButtonText}>
-                        {isPlaying ? '⏸' : '▶️'}
-                      </Text>
-                    </View>
-                    <View style={styles.waveformContainer}>
-                      <View style={[styles.waveformBar, isPlaying && styles.waveformPlaying]} />
-                      <View style={[styles.waveformBar, styles.waveformBarMedium, isPlaying && styles.waveformPlaying]} />
-                      <View style={[styles.waveformBar, isPlaying && styles.waveformPlaying]} />
-                      <View style={[styles.waveformBar, styles.waveformBarShort, isPlaying && styles.waveformPlaying]} />
-                      <View style={[styles.waveformBar, isPlaying && styles.waveformPlaying]} />
-                    </View>
-                    <Text style={styles.audioLabel}>Voice Message</Text>
-                  </TouchableOpacity>
-                ) : item.status === 'pending' ? (
-                  <View style={styles.loadingContainer}>
-                    <Text style={styles.loadingText}>Generating...</Text>
+        {/* Message body */}
+        <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
+          {isUser ? (
+            <Text style={styles.userBubbleText}>{item.text}</Text>
+          ) : (
+            <>
+              {item.audioUri ? (
+                // Voice message player
+                <TouchableOpacity
+                  style={styles.audioPlayer}
+                  onPress={() => isPlaying ? stopCurrentAudio() : playAudio(item.id, item.audioUri!)}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.playButton, isPlaying && styles.playButtonPlaying]}>
+                    <Ionicons
+                      name={isPlaying ? 'pause' : 'play'}
+                      size={18}
+                      color={pinterestColors['on-primary']}
+                    />
                   </View>
-                ) : (
-                  <Text style={styles.messageText}>{item.text}</Text>
-                )}
-                {item.status === 'error' && (
+                  <View style={styles.waveformContainer}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.waveformBar,
+                          i === 2 && styles.waveformBarMedium,
+                          i === 4 && styles.waveformBarShort,
+                          isPlaying && styles.waveformBarPlaying,
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.audioLabel}>
+                    {isPlaying ? 'Playing…' : 'Voice Message'}
+                  </Text>
+                </TouchableOpacity>
+              ) : item.status === 'pending' ? (
+                <View style={styles.loadingContainer}>
+                  <Ionicons name="hourglass" size={14} color={pinterestColors.mute} />
+                  <Text style={styles.loadingText}>Generating…</Text>
+                </View>
+              ) : (
+                <Text style={styles.messageText}>{item.text}</Text>
+              )}
+              {item.status === 'error' && (
+                <TouchableOpacity onPress={() => handleRetry(item.id)}>
                   <Text style={styles.errorLabel}>Tap to retry</Text>
-                )}
-              </>
-            )}
-          </View>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
         </View>
       </TouchableOpacity>
     );
   };
 
+  const renderEmptyChat = () => (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyAvatarWrapper}>
+        <Avatar voice={voice} size={80} />
+      </View>
+      <Text style={styles.emptyTitle}>{voice.name}</Text>
+      <Text style={styles.emptySubtitle}>
+        Tap the send button after typing to generate a voice message
+      </Text>
+    </View>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
-      
+
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>←</Text>
+        {/* Back button */}
+        <TouchableOpacity style={styles.backButton} onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="chevron-back" size={24} color={pinterestColors.ink} />
         </TouchableOpacity>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle}>Voice Chat</Text>
-          <Text style={styles.headerSubtitle}>{voice.name} • {voice.gender}</Text>
+
+        {/* Voice info */}
+        <View style={styles.headerVoiceInfo}>
+          <Avatar voice={voice} size={36} />
+          <View style={styles.headerTextWrapper}>
+            <Text style={styles.headerTitle} numberOfLines={1}>{voice.name}</Text>
+            <Text style={styles.headerSubtitle}>
+              {voice.gender === 'male' ? 'Male voice' : 'Female voice'}
+            </Text>
+          </View>
         </View>
+
+        {/* Placeholder for symmetry */}
         <View style={styles.headerPlaceholder} />
       </View>
+
+      {/* Divider */}
+      <View style={styles.headerDivider} />
 
       {/* Messages */}
       <FlatList
@@ -276,13 +322,18 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
         data={messages}
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.messagesList}
+        contentContainerStyle={[
+          styles.messagesList,
+          messages.length === 0 && styles.messagesListEmpty,
+        ]}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+        ListEmptyComponent={renderEmptyChat}
       />
 
-      {/* Input */}
+      {/* Input — lifts above keyboard */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+        keyboardVerticalOffset={0}
         style={styles.inputContainer}
       >
         <View style={styles.inputWrapper}>
@@ -290,17 +341,25 @@ export function ChatScreen({ voice, onBack }: ChatScreenProps) {
             style={styles.textInput}
             value={inputText}
             onChangeText={setInputText}
-            placeholder="Type a message..."
-            placeholderTextColor={pinterestColors.mute}
+            placeholder="Type a message…"
+            placeholderTextColor={pinterestColors.ash}
             multiline
             maxLength={500}
           />
           <TouchableOpacity
-            style={[styles.sendButton, (!inputText.trim() || isGenerating) && styles.sendButtonDisabled]}
+            style={[
+              styles.sendButton,
+              (!inputText.trim() || isGenerating) && styles.sendButtonDisabled,
+            ]}
             onPress={handleSend}
             disabled={!inputText.trim() || isGenerating}
+            activeOpacity={0.7}
           >
-            <Text style={styles.sendButtonText}>Send</Text>
+            <Ionicons
+              name="send"
+              size={18}
+              color={pinterestColors['on-primary']}
+            />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -313,15 +372,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: pinterestColors.canvas,
   },
+  // ── Header ─────────────────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: pinterestSpacing.lg,
-    paddingVertical: pinterestSpacing.md,
-    backgroundColor: pinterestColors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: pinterestColors.hairline,
+    paddingHorizontal: pinterestSpacing.sm,
+    paddingVertical: pinterestSpacing.sm,
+    backgroundColor: pinterestColors.canvas,
   },
   backButton: {
     width: 40,
@@ -329,15 +387,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  backButtonText: {
-    fontSize: 24,
-    color: pinterestColors.ink,
-  },
-  headerInfo: {
+  headerVoiceInfo: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: pinterestSpacing.sm,
+  },
+  headerTextWrapper: {
+    alignItems: 'flex-start',
   },
   headerTitle: {
     ...pinterestTypography.subhead,
+    fontWeight: '700',
     color: pinterestColors.ink,
   },
   headerSubtitle: {
@@ -347,65 +409,63 @@ const styles = StyleSheet.create({
   headerPlaceholder: {
     width: 40,
   },
+  headerDivider: {
+    height: 1,
+    backgroundColor: pinterestColors.hairline,
+  },
+  // ── Messages ────────────────────────────────────────────────────────────────
   messagesList: {
-    padding: pinterestSpacing.md,
+    paddingVertical: pinterestSpacing.md,
     flexGrow: 1,
+  },
+  messagesListEmpty: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   messageContainer: {
     marginBottom: pinterestSpacing.md,
-  },
-  userMessageContainer: {
-    alignItems: 'flex-end',
-    flexDirection: 'row-reverse',
-  },
-  assistantMessageContainer: {
-    alignItems: 'flex-start',
-  },
-  messageContent: {
+    paddingHorizontal: pinterestSpacing.lg,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    maxWidth: '80%',
   },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: pinterestSpacing.sm,
+  userMessageContainer: {
+    justifyContent: 'flex-end',
   },
-  userAvatar: {
-    backgroundColor: pinterestColors.primary,
+  assistantMessageContainer: {
+    justifyContent: 'flex-start',
   },
-  assistantAvatar: {
-    backgroundColor: pinterestColors.canvas,
-  },
-  avatarText: {
-    fontSize: 18,
+  assistantAvatarWrapper: {
+    marginRight: pinterestSpacing.sm,
   },
   messageBubble: {
     padding: pinterestSpacing.md,
-    borderRadius: pinterestSpacing.lg,
-    maxWidth: '100%',
+    borderRadius: pinterestRounded.md,
+    maxWidth: '75%',
   },
+  // Pinterest red bubble — text must be white for readability
   userBubble: {
     backgroundColor: pinterestColors.primary,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: pinterestRounded.sm,
+  },
+  userBubbleText: {
+    ...pinterestTypography.body,
     color: pinterestColors['on-primary'],
+    lineHeight: 20,
   },
   assistantBubble: {
-    backgroundColor: pinterestColors.surface,
-    borderBottomLeftRadius: 4,
+    backgroundColor: pinterestColors['surface-card'],
+    borderBottomLeftRadius: pinterestRounded.sm,
   },
   messageText: {
     ...pinterestTypography.body,
     color: pinterestColors.ink,
+    lineHeight: 20,
   },
+  // ── Audio Player ────────────────────────────────────────────────────────────
   audioPlayer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: pinterestSpacing.xs,
-    minWidth: 200,
+    minWidth: 180,
   },
   playButton: {
     width: 36,
@@ -416,8 +476,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: pinterestSpacing.sm,
   },
-  playButtonText: {
-    fontSize: 16,
+  playButtonPlaying: {
+    backgroundColor: pinterestColors['primary-pressed'],
   },
   waveformContainer: {
     flexDirection: 'row',
@@ -438,39 +498,64 @@ const styles = StyleSheet.create({
   waveformBarShort: {
     height: 8,
   },
-  waveformPlaying: {
+  waveformBarPlaying: {
     backgroundColor: pinterestColors.primary,
   },
   audioLabel: {
     ...pinterestTypography.caption,
     color: pinterestColors.mute,
   },
+  // ── States ─────────────────────────────────────────────────────────────────
   loadingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: pinterestSpacing.xs,
   },
   loadingText: {
     ...pinterestTypography.caption,
     color: pinterestColors.mute,
+    fontStyle: 'italic',
   },
   errorLabel: {
     ...pinterestTypography.caption,
-    color: '#C62828',
+    color: pinterestColors.destructive,
     marginTop: pinterestSpacing.xs,
+    fontWeight: '600',
   },
+  // ── Empty state ────────────────────────────────────────────────────────────
+  emptyState: {
+    alignItems: 'center',
+    paddingHorizontal: pinterestSpacing.xxl,
+  },
+  emptyAvatarWrapper: {
+    marginBottom: pinterestSpacing.lg,
+  },
+  emptyTitle: {
+    ...pinterestTypography.headline,
+    color: pinterestColors.ink,
+    marginBottom: pinterestSpacing.sm,
+  },
+  emptySubtitle: {
+    ...pinterestTypography.body,
+    color: pinterestColors.mute,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  // ── Input ─────────────────────────────────────────────────────────────────
   inputContainer: {
-    padding: pinterestSpacing.md,
-    backgroundColor: pinterestColors.surface,
+    backgroundColor: pinterestColors.canvas,
     borderTopWidth: 1,
     borderTopColor: pinterestColors.hairline,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: pinterestColors.canvas,
-    borderRadius: pinterestSpacing.lg,
+    backgroundColor: pinterestColors['surface-card'],
+    borderRadius: pinterestRounded.full,
     paddingHorizontal: pinterestSpacing.md,
     paddingVertical: pinterestSpacing.sm,
+    marginHorizontal: pinterestSpacing.lg,
+    marginVertical: pinterestSpacing.md,
   },
   textInput: {
     flex: 1,
@@ -480,17 +565,15 @@ const styles = StyleSheet.create({
     paddingVertical: pinterestSpacing.xs,
   },
   sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: pinterestColors.primary,
-    paddingVertical: pinterestSpacing.sm,
-    paddingHorizontal: pinterestSpacing.md,
-    borderRadius: pinterestSpacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginLeft: pinterestSpacing.sm,
   },
   sendButtonDisabled: {
-    backgroundColor: pinterestColors.mute,
-  },
-  sendButtonText: {
-    ...pinterestTypography.button,
-    color: pinterestColors['on-primary'],
+    backgroundColor: pinterestColors.stone,
   },
 });

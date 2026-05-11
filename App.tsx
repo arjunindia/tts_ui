@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { BackHandler } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
 import ttsEngine, { SupertonicTTS } from './src/utils/ttsEngine';
-import { Voice } from './src/types';
+import { Voice, Message } from './src/types';
 
 // Voice configurations - M1-M5 male, F1-F5 female
 const VOICES: Voice[] = [
@@ -23,6 +24,9 @@ const VOICES: Voice[] = [
 
 const DEFAULT_MODEL_ID = 'model.onnx';
 
+// Per-voice message history for last-message previews on the contact list
+type MessageHistory = Record<string, Message[]>;
+
 export default function App() {
   const [selectedVoice, setSelectedVoice] = useState<Voice>(VOICES[0]);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
@@ -30,6 +34,19 @@ export default function App() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [currentScreen, setCurrentScreen] = useState<'home' | 'chat'>('home');
+  const [messageHistory, setMessageHistory] = useState<MessageHistory>({});
+
+  // Handle Android hardware back button
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (currentScreen === 'chat') {
+        setCurrentScreen('home');
+        return true; // prevent default
+      }
+      return false;
+    });
+    return () => backHandler.remove();
+  }, [currentScreen]);
 
   // Initialize TTS on app start
   useEffect(() => {
@@ -39,7 +56,7 @@ export default function App() {
   const initializeTTS = async () => {
     try {
       setError(null);
-      
+
       // Check if model is already cached
       const isLoaded = ttsEngine.isModelLoaded();
       if (isLoaded) {
@@ -50,7 +67,7 @@ export default function App() {
       // Download model if not cached
       setIsDownloading(true);
       setDownloadProgress(0);
-      
+
       const success = await ttsEngine.downloadModel(DEFAULT_MODEL_ID, (progress) => {
         setDownloadProgress(progress);
       });
@@ -82,8 +99,21 @@ export default function App() {
     setCurrentScreen('chat');
   }, []);
 
+  const handleOpenChat = useCallback((voice: Voice) => {
+    setSelectedVoice(voice);
+    setCurrentScreen('chat');
+  }, []);
+
   const handleBackToHome = useCallback(() => {
     setCurrentScreen('home');
+  }, []);
+
+  // Called by ChatScreen when messages change so HomeScreen can show last-message previews
+  const handleMessagesUpdate = useCallback((voiceId: string, messages: Message[]) => {
+    setMessageHistory(prev => ({
+      ...prev,
+      [voiceId]: messages,
+    }));
   }, []);
 
   // Render home screen
@@ -94,11 +124,13 @@ export default function App() {
         selectedVoice={selectedVoice}
         onSelectVoice={handleSelectVoice}
         onStartChat={handleStartChat}
+        onOpenChat={handleOpenChat}
         isModelLoaded={isModelLoaded}
         isDownloading={isDownloading}
         downloadProgress={downloadProgress}
         error={error}
         onRetry={initializeTTS}
+        messageHistory={messageHistory}
       />
     );
   }
@@ -108,6 +140,7 @@ export default function App() {
     <ChatScreen
       voice={selectedVoice}
       onBack={handleBackToHome}
+      onMessagesChange={(messages) => handleMessagesUpdate(selectedVoice.id, messages)}
     />
   );
 }
