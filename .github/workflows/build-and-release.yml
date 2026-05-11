@@ -74,6 +74,8 @@ jobs:
 
       - name: EAS Local Build
         id: eas
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           echo "Running: eas build --platform android --profile $EAS_PROFILE --local --non-interactive"
           eas build \
