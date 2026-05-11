@@ -1,2 +1,5 @@
 node_modules
 *.lock
+
+# TTS ONNX models — downloaded at runtime from HuggingFace
+assets/supertonic/

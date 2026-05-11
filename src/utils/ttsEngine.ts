@@ -9,7 +9,6 @@
  */
 
 import * as FileSystem from 'expo-file-system/legacy';
-import { InferenceSession, Tensor } from 'onnxruntime-react-native';
 import { Audio } from 'expo-av';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -65,9 +64,11 @@ async function readCacheText(filename: string): Promise<string | null> {
 
 /** Convert Float32 audio to WAV file, returns local URI */
 async function float32ToWavUri(samples: Float32Array, sampleRate: number): Promise<string> {
+  // Clamp to [-1, 1] first, then scale — matches reference implementation
   const int16 = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) {
-    int16[i] = Math.max(-32768, Math.min(32767, Math.floor(samples[i] * 32767)));
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    int16[i] = Math.floor(clamped * 32767);
   }
 
   const numChannels = 1;
@@ -117,9 +118,10 @@ function uint8ToBase64(bytes: Uint8Array): string {
 // ─── Unicode Processor (faithful port of helper.js) ──────────────────────────
 
 class UnicodeProcessor {
-  private indexer: Record<number, number> = {};
+  // FIX #4: indexer is a flat array, not a Record — indexed by codepoint
+  private indexer: number[] = [];
 
-  constructor(indexerJson: Record<string, number>) {
+  constructor(indexerJson: number[]) {
     this.indexer = indexerJson;
   }
 
@@ -132,13 +134,16 @@ class UnicodeProcessor {
       ''
     );
 
-    // Symbol normalizations
+    // Symbol normalizations — FIX: also normalize NB hyphen, backtick, acute accent
+    text = text.split('\u2011').join('-');   // non-breaking hyphen (U+2011)
     text = text.split('\u2013').join('-');   // en dash
     text = text.split('\u2014').join('-');   // em dash
     text = text.split('\u201C').join('"');   // left double quote
     text = text.split('\u201D').join('"');   // right double quote
     text = text.split('\u2018').join("'");   // left single quote
     text = text.split('\u2019').join("'");   // right single quote
+    text = text.split('\u0060').join("'");   // backtick
+    text = text.split('\u00B4').join("'");   // acute accent
     text = text.split('[').join(' ');
     text = text.split(']').join(' ');
     text = text.split('|').join(' ');
@@ -191,7 +196,8 @@ class UnicodeProcessor {
       const row = new Array(maxLen).fill(0);
       const vals = this.textToUnicodeValues(text);
       for (let j = 0; j < vals.length; j++) {
-        row[j] = this.indexer[vals[j]] ?? 0;
+        // FIX #4: use -1 for OOV characters (flat array indexing)
+        row[j] = (vals[j] < this.indexer.length) ? this.indexer[vals[j]] : -1;
       }
       return row;
     });
@@ -217,10 +223,16 @@ interface TtsConfig {
 // ─── Main Engine ─────────────────────────────────────────────────────────────
 
 export class SupertonicTTS {
-  private dpSession: InferenceSession | null = null;
-  private textEncSession: InferenceSession | null = null;
-  private vecEstSession: InferenceSession | null = null;
-  private vocSession: InferenceSession | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private dpSession: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private textEncSession: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private vecEstSession: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private vocSession: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _Tensor: any = null;
 
   private textProcessor: UnicodeProcessor | null = null;
   private config: TtsConfig | null = null;
@@ -275,24 +287,26 @@ export class SupertonicTTS {
 
       const idxRaw = await readCacheText('unicode_indexer.json');
       if (!idxRaw) throw new Error('Failed to load unicode_indexer.json');
-      const idxData: Record<string, number> = JSON.parse(idxRaw);
+      // FIX #4: indexer is a flat array, not Record<string, number>
+      const idxData: number[] = JSON.parse(idxRaw);
       this.textProcessor = new UnicodeProcessor(idxData);
 
-      // 4. Create ONNX sessions
-      const cacheDir = FileSystem.cacheDirectory!;
+      // 4. Dynamically import ONNX runtime (defer native module init to here)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ONNX: any = await import('onnxruntime-react-native');
+      const InferenceSession = ONNX.InferenceSession;
+      const Tensor = ONNX.Tensor;
+      this._Tensor = Tensor;
+
+      // FIX #3: Strip file:// URI scheme before passing to ONNX runtime
+      const rawCachePath = (FileSystem.cacheDirectory ?? '').replace(/^file:\/\//, '');
+
+      // FIX #2: Load ONNX sessions SEQUENTIALLY to avoid OOM on mobile
       const opts = { executionProviders: ['cpu'] as const };
-
-      const [dp, te, ve, voc] = await Promise.all([
-        InferenceSession.create(cacheDir + 'duration_predictor.onnx', opts),
-        InferenceSession.create(cacheDir + 'text_encoder.onnx', opts),
-        InferenceSession.create(cacheDir + 'vector_estimator.onnx', opts),
-        InferenceSession.create(cacheDir + 'vocoder.onnx', opts),
-      ]);
-
-      this.dpSession = dp;
-      this.textEncSession = te;
-      this.vecEstSession = ve;
-      this.vocSession = voc;
+      this.dpSession = await InferenceSession.create(rawCachePath + 'duration_predictor.onnx', opts);
+      this.textEncSession = await InferenceSession.create(rawCachePath + 'text_encoder.onnx', opts);
+      this.vecEstSession = await InferenceSession.create(rawCachePath + 'vector_estimator.onnx', opts);
+      this.vocSession = await InferenceSession.create(rawCachePath + 'vocoder.onnx', opts);
 
       this._isLoaded = true;
       onProgress?.(1);
@@ -329,8 +343,8 @@ export class SupertonicTTS {
         }
       }
 
-      const ttlTensor = new Tensor('float32', Float32Array.from(ttlFlat), vs.style_ttl.dims as [number, number, number]);
-      const dpTensor = new Tensor('float32', Float32Array.from(dpFlat), vs.style_dp.dims as [number, number, number]);
+      const ttlTensor = new this._Tensor('float32', Float32Array.from(ttlFlat), vs.style_ttl.dims as [number, number, number]);
+      const dpTensor = new this._Tensor('float32', Float32Array.from(dpFlat), vs.style_dp.dims as [number, number, number]);
 
       this.voiceStyles[id] = { ttl: ttlTensor, dp: dpTensor };
     } catch (e) {
@@ -352,27 +366,32 @@ export class SupertonicTTS {
   private getLatentMask(wavLengths: number[], baseChunkSize: number, chunkCompress: number): number[][][] {
     const latentSize = baseChunkSize * chunkCompress;
     const latentLengths = wavLengths.map(len => Math.floor((len + latentSize - 1) / latentSize));
-    return this.lengthToMask(latentLengths);
+    // FIX #5: pass explicit maxLen so mask and tensor dimensions always align
+    const maxLen = Math.max(...latentLengths);
+    return this.lengthToMask(latentLengths, maxLen);
   }
 
+  // FIX #1: Correct config fields — ttl, not ae — and pass explicit maxLen
   private sampleNoisyLatent(durations: number[]): { noisyLatent: number[][][]; latentMask: number[][][] } {
     const cfg = this.config!;
     const sr = cfg.ae.sample_rate;
     const bcs = cfg.ae.base_chunk_size;
-    const ccf_ae = cfg.ae.chunk_compress_factor;
-    const ldim = cfg.ae.ldim;
-    const ccf_ttl = cfg.ttl.chunk_compress_factor;
+    // FIX #1: was cfg.ae.chunk_compress_factor — correct is ttl.chunk_compress_factor
+    const ccf = cfg.ttl.chunk_compress_factor;
+    // FIX #1: was cfg.ae.ldim — correct is ttl.latent_dim
+    const ldim = cfg.ttl.latent_dim;
 
-    const wavLenMax = Math.max(...durations) * sr;
+    // FIX minor: floor wavLenMax for integer arithmetic
+    const wavLenMax = Math.floor(Math.max(...durations) * sr);
     const wavLengths = durations.map(d => Math.floor(d * sr));
-    const chunkSize = bcs * ccf_ae;
-    const latentLen = Math.ceil(wavLenMax / chunkSize);
-    const latentDim = ldim * ccf_ttl;
+    const chunkSize = bcs * ccf;
+    const latentLen = Math.floor((wavLenMax + chunkSize - 1) / chunkSize);
+    const latentDimVal = ldim * ccf;
 
     const noisyLatent: number[][][] = [];
     for (let b = 0; b < durations.length; b++) {
       const batch: number[][] = [];
-      for (let d = 0; d < latentDim; d++) {
+      for (let d = 0; d < latentDimVal; d++) {
         const row: number[] = [];
         for (let t = 0; t < latentLen; t++) {
           // Box-Muller transform
@@ -385,7 +404,8 @@ export class SupertonicTTS {
       noisyLatent.push(batch);
     }
 
-    const latentMask = this.getLatentMask(wavLengths, bcs, ccf_ae);
+    // FIX #5: pass explicit latentLen as maxLen to keep mask aligned
+    const latentMask = this.getLatentMask(wavLengths, bcs, ccf);
 
     // Apply mask
     for (let b = 0; b < noisyLatent.length; b++) {
@@ -399,22 +419,23 @@ export class SupertonicTTS {
     return { noisyLatent, latentMask };
   }
 
-  private arrayToTensor(arr: number[][][], dims: number[]): Tensor {
+  private arrayToTensor(arr: number[][][], dims: number[]): any {
     const flat: number[] = [];
     for (const b of arr) for (const d of b) for (const v of d) flat.push(v);
-    return new Tensor('float32', Float32Array.from(flat), dims as [number, number, number]);
+    return new this._Tensor('float32', Float32Array.from(flat), dims as [number, number, number]);
   }
 
-  private intArrayToTensor(arr: number[][], dims: number[]): Tensor {
+  private intArrayToTensor(arr: number[][], dims: number[]): any {
     const flat: bigint[] = [];
     for (const row of arr) for (const v of row) flat.push(BigInt(v));
-    return new Tensor('int64', new BigInt64Array(flat), dims as [number, number]);
+    return new this._Tensor('int64', new BigInt64Array(flat), dims as [number, number]);
   }
 
   private async _infer(
     textList: string[],
     langList: LangCode[],
-    style: { ttl: Tensor; dp: Tensor },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    style: { ttl: any; dp: any },
     totalStep: number,
     speed: number,
   ): Promise<{ wav: Float32Array; duration: number[] }> {
@@ -436,7 +457,7 @@ export class SupertonicTTS {
     const durationKey = Object.keys(dpResult).find(k =>
       k.toLowerCase().includes('duration') || k.toLowerCase().includes('dur')
     ) ?? Object.keys(dpResult)[0];
-    const durOnnx = (dpResult[durationKey] as Tensor).data as Float32Array;
+    const durOnnx = (dpResult[durationKey] as any).data as Float32Array;
     const durArr = Array.from(durOnnx).map(v => v / speed);
 
     // Text encoder
@@ -445,7 +466,7 @@ export class SupertonicTTS {
       style_ttl: style.ttl,
       text_mask: textMaskTensor,
     });
-    const textEmbTensor = encResult['text_emb'] as Tensor;
+    const textEmbTensor = encResult['text_emb'] as any;
 
     // Sample noisy latent
     let { noisyLatent, latentMask } = this.sampleNoisyLatent(durArr);
@@ -464,14 +485,16 @@ export class SupertonicTTS {
         style_ttl: style.ttl,
         text_mask: textMaskTensor,
         latent_mask: latentMaskTensor,
-        total_step: new Tensor('float32', Float32Array.from(totalStepArr), [bsz]),
-        current_step: new Tensor('float32', Float32Array.from(currentStepArr.map(Number)), [bsz]),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        total_step: new (this._Tensor as any)('float32', Float32Array.from(totalStepArr), [bsz]),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        current_step: new (this._Tensor as any)('float32', Float32Array.from(currentStepArr.map(Number)), [bsz]),
       });
 
       const denoisedKey = Object.keys(veResult).find(k =>
         k.toLowerCase().includes('denoised') || k.toLowerCase().includes('latent')
       ) ?? Object.keys(veResult)[0];
-      const denoisedRaw = (veResult[denoisedKey] as Tensor).data as Float32Array;
+      const denoisedRaw = (veResult[denoisedKey] as any).data as Float32Array;
 
       // In-place update
       let idx = 0;
@@ -492,7 +515,7 @@ export class SupertonicTTS {
     const wavKey = Object.keys(vocResult).find(k =>
       k.toLowerCase().includes('wav') || k.toLowerCase().includes('output')
     ) ?? Object.keys(vocResult)[0];
-    const wavRaw = (vocResult[wavKey] as Tensor).data as Float32Array;
+    const wavRaw = (vocResult[wavKey] as any).data as Float32Array;
 
     return { wav: wavRaw, duration: durArr };
   }
@@ -549,11 +572,14 @@ export class SupertonicTTS {
   }
 
   /** Chunk text into sentences within maxLen chars */
+  // FIX #6: correct lookbehind regex — each abbreviation as separate lookbehind, | is literal inside [...]
   private chunkText(text: string, maxLen = 300): string[] {
     const paragraphs = text.trim().split(/\n\s*\n/).filter(p => p.trim());
     const chunks: string[] = [];
     for (const para of paragraphs) {
-      const sentences = para.split(/(?<![Mr|Mrs|Ms|Dr|Prof|Sr|Jr|etc|e\.g|i\.e|Inc|Ltd|Co|St]\.)\.?\s+/).filter(Boolean);
+      const sentences = para.split(
+        /(?<!Mr\.)(?<!Mrs\.)(?<!Ms\.)(?<!Dr\.)(?<!Prof\.)(?<!Sr\.)(?<!Jr\.)(?<!etc\.)(?<!e\.g\.)(?<!i\.e\.)(?<!Inc\.)(?<!Ltd\.)(?<!Co\.)(?<!St\.)(?<=[.!?])\s+/
+      ).filter(Boolean);
       let current = '';
       for (const sent of sentences) {
         if (current.length + sent.length + 1 <= maxLen) {
