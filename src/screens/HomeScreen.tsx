@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,15 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Share,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Voice } from '../types';
 import { pinterestColors, pinterestSpacing, pinterestTypography } from '../theme/pinterest';
+
+const CRASH_LOG_PATH = (FileSystem.documentDirectory ?? '') + 'crash.log';
 
 interface HomeScreenProps {
   voices: Voice[];
@@ -36,8 +40,34 @@ export function HomeScreen({
   error,
   onRetry,
 }: HomeScreenProps) {
+  const [crashLog, setCrashLog] = useState<string | null>(null);
   const maleVoices = voices.filter(v => v.gender === 'male');
   const femaleVoices = voices.filter(v => v.gender === 'female');
+
+  // Read crash.log on mount — shows previous session's errors
+  useEffect(() => {
+    FileSystem.readAsStringAsync(CRASH_LOG_PATH, {
+      encoding: FileSystem.EncodingType.UTF8,
+    })
+      .then(content => {
+        if (content.trim()) setCrashLog(content.trim());
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleClearCrashLog = useCallback(async () => {
+    try {
+      await FileSystem.deleteAsync(CRASH_LOG_PATH, { idempotent: true });
+      setCrashLog(null);
+    } catch {}
+  }, []);
+
+  const handleShareCrashLog = useCallback(async () => {
+    if (!crashLog) return;
+    try {
+      await Share.share({ message: `TTS UI Crash Log:\n\n${crashLog}` });
+    } catch {}
+  }, [crashLog]);
 
   const handleStartChat = () => {
     if (!isModelLoaded) {
@@ -54,7 +84,25 @@ export function HomeScreen({
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
-      
+
+      {/* Crash Log Banner — shows errors from the previous session */}
+      {crashLog && (
+        <View style={styles.crashBanner}>
+          <View style={styles.crashBannerHeader}>
+            <Text style={styles.crashBannerTitle}>⚠️ Previous Session Crashed</Text>
+            <TouchableOpacity onPress={handleClearCrashLog}>
+              <Text style={styles.crashBannerDismiss}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.crashLogScroll} nestedScrollEnabled>
+            <Text style={styles.crashLogText}>{crashLog}</Text>
+          </ScrollView>
+          <TouchableOpacity style={styles.shareButton} onPress={handleShareCrashLog}>
+            <Text style={styles.shareButtonText}>Share / Copy Log</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Voice Chat</Text>
@@ -328,5 +376,57 @@ const styles = StyleSheet.create({
   statusText: {
     ...pinterestTypography.caption,
     color: pinterestColors.mute,
+  },
+  // ── Crash log banner ──────────────────────────────────────────────────────
+  crashBanner: {
+    marginHorizontal: pinterestSpacing.lg,
+    marginTop: pinterestSpacing.md,
+    backgroundColor: '#FFF3E0',
+    borderRadius: pinterestSpacing.sm,
+    borderWidth: 1,
+    borderColor: '#FF6B00',
+    padding: pinterestSpacing.md,
+    maxHeight: 240,
+  },
+  crashBannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: pinterestSpacing.sm,
+  },
+  crashBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#BF360C',
+  },
+  crashBannerDismiss: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FF6B00',
+  },
+  crashLogScroll: {
+    maxHeight: 120,
+    backgroundColor: '#FFF8F0',
+    borderRadius: 4,
+    padding: pinterestSpacing.sm,
+    marginBottom: pinterestSpacing.sm,
+  },
+  crashLogText: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    color: '#4E342E',
+    lineHeight: 16,
+  },
+  shareButton: {
+    backgroundColor: '#FF6B00',
+    borderRadius: pinterestSpacing.xs,
+    paddingVertical: pinterestSpacing.xs,
+    paddingHorizontal: pinterestSpacing.md,
+    alignSelf: 'flex-end',
+  },
+  shareButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });
