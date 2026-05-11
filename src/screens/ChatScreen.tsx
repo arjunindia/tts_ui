@@ -91,7 +91,7 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
 
   const handleSend = useCallback(async () => {
     // TODO: remove debug log after testing
-    console.log('[Chat] handleSend called', { inputTextLen: inputText.length, isGenerating });
+    console.log('[Chat] handleSend called', { inputText: JSON.stringify(inputText), inputTextLen: inputText.length, isGenerating });
     if (!inputText.trim() || isGenerating) return;
 
     const userMessage: Message = {
@@ -354,7 +354,10 @@ export function ChatScreen({ voice, onBack, onMessagesChange }: ChatScreenProps)
               <TextInput
                 style={styles.textInput}
                 value={inputText}
-                onChangeText={setInputText}
+                onChangeText={(t) => {
+                  console.log('[DEBUG] onChangeText called with:', JSON.stringify(t));
+                  setInputText(t);
+                }}
                 placeholder="Type a message…"
                 placeholderTextColor={pinterestColors.ash}
                 multiline
