@@ -6,24 +6,24 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: 'Build type'
+        description: 'EAS build profile'
         required: true
-        default: 'release'
+        default: 'preview'
         type: choice
         options:
-          - debug
-          - release
+          - preview
+          - production
       tag:
-        description: 'Release tag (e.g. v1.0.0, leave empty to skip release)'
+        description: 'Release tag (leave empty to skip release creation)'
         required: false
         type: string
 
 env:
-  BUILD_TYPE: ${{ github.event.inputs.profile || 'release' }}
+  EAS_PROFILE: ${{ github.event.inputs.profile || 'preview' }}
 
 jobs:
   build:
-    name: Build Android APK
+    name: EAS Local Build (Android)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,11 +41,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ─── Android SDK ──────────────────────────────────────────────────────────
+      # ─── Android SDK (required for eas build --local) ──────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # ─── Java ─────────────────────────────────────────────────────────────────
       - name: Setup Java (JDK 17)
         uses: actions/setup-java@v4
         with:
@@ -69,155 +68,65 @@ jobs:
             "ndk;27.0.12077973" \
             "cmake;3.22.1"
 
-      # ─── Generate native Android project ──────────────────────────────────────
-      - name: Expo prebuild
-        run: |
-          npx expo prebuild --platform android --clean
-          echo "android_generated=true" >> $GITHUB_ENV
+      # ─── EAS CLI + Local build ─────────────────────────────────────────────────
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
 
-      # ─── Pre-bundle JS so it's definitely in the APK ──────────────────────────
-      - name: Bundle JS into APK assets
+      - name: EAS Local Build
+        id: eas
         run: |
-          mkdir -p android/app/src/main/assets
-          npx react-native bundle \
+          echo "Running: eas build --platform android --profile $EAS_PROFILE --local --non-interactive"
+          eas build \
             --platform android \
-            --dev false \
-            --entry-file index.ts \
-            --bundle-output android/app/src/main/assets/index.android.bundle \
-            --assets-dest android/app/src/main/res
-          echo "--- JS bundle created ---"
-          ls -lh android/app/src/main/assets/
+            --profile "$EAS_PROFILE" \
+            --local \
+            --non-interactive \
+            --message "GitHub Actions build from ${{ github.sha }}"
+          echo "--- Looking for APK ---"
+          find . -name "*.apk" -type f 2>/dev/null
 
-      # ─── Configure signing for release builds ─────────────────────────────────
-      - name: Configure release signing
-        if: env.BUILD_TYPE == 'release'
+      # ─── Find APK ────────────────────────────────────────────────────────────
+      - name: Locate APK
+        id: apk
         run: |
-          # Build APK for arm64-v8a (most Android phones) + armeabi-v7a (older devices)
-          # This overrides any host-architecture-only build
-          if grep -q "ndk.abiFilters" android/app/build.gradle; then
-            echo "ABI filters already set"
-          else
-            sed -i '/defaultConfig {/,/}/ s/bundleInDebug/android { ndk { abiFilters "arm64-v8a", "armeabi-v7a" } }\n      bundleInDebug/' android/app/build.gradle 2>/dev/null || true
-            # Simpler approach: add ndk.abiFilters via append
-            python3 << 'EOF'
-            with open("android/app/build.gradle", "r") as f:
-                content = f.read()
-
-            if "ndk.abiFilters" not in content:
-                content = content.replace(
-                    "defaultConfig {",
-                    "defaultConfig {\n        ndk.abiFilters \"arm64-v8a\", \"armeabi-v7a\", \"x86_64\", \"x86\""
-                )
-                with open("android/app/build.gradle", "w") as f:
-                    f.write(content)
-                print("Added ndk.abiFilters")
-            else:
-                print("ndk.abiFilters already present")
-            EOF
-          fi
-
-          # Generate a debug keystore for signing
-          keytool \
-            -genkeypair \
-            -v \
-            -storetype PKCS12 \
-            -keystore android/app/ttsui-release.keystore \
-            -alias ttsui \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD || 'android' }}" \
-            -keypass "${{ secrets.KEYSTORE_PASSWORD || 'android' }}" \
-            -dname "CN=tts_ui, OU=Dev, O=Dev, L=City, ST=State, C=US"
-
-          cat >> android/app/build.gradle << 'GRADLE'
-
-          android {
-              signingConfigs {
-                  release {
-                      storeFile file("ttsui-release.keystore")
-                      storePassword "${{ secrets.KEYSTORE_PASSWORD || 'android' }}"
-                      keyAlias "ttsui"
-                      keyPassword "${{ secrets.KEYSTORE_PASSWORD || 'android' }}"
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                  }
-              }
-          }
-          GRADLE
-
-      # ─── Build APK ────────────────────────────────────────────────────────────
-      - name: Build APK
-        id: gradle
-        run: |
-          if [ "${{ env.BUILD_TYPE }}" = "release" ]; then
-            BUILD_TASK="assembleRelease"
-            APK_OUT="android/app/build/outputs/apk/release/app-release.apk"
-          else
-            BUILD_TASK="assembleDebug"
-            APK_OUT="android/app/build/outputs/apk/debug/app-debug.apk"
-          fi
-
-          echo "Running Gradle task: $BUILD_TASK"
-          echo "APK_OUTPUT=$APK_OUT" >> $GITHUB_ENV
-
-          cd android
-          ./gradlew $BUILD_TASK --no-daemon --warning-mode=all
-          cd ..
-
-          echo "--- APK files ---"
-          find android -name "*.apk" -type f 2>/dev/null
-
-          if [ ! -f "$APK_OUT" ]; then
-            echo "::error::APK not found at $APK_OUT"
+          APK=$(find . -path "./node_modules" -prune -o -name "*.apk" -type f -print 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::No APK found after build"
             exit 1
           fi
+          echo "Found APK: $APK"
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+          echo "apk_size=$(du -h $APK | cut -f1)" >> $GITHUB_OUTPUT
+          ls -lh "$APK"
 
-          echo "--- Verifying JS bundle in APK ---"
-          if unzip -l "$APK_OUT" 2>/dev/null | grep -q "index.android.bundle"; then
-            echo "✓ JS bundle confirmed in APK"
-          else
-            echo "✗ WARNING: JS bundle not detected in APK listing"
-          fi
-
-          echo "apk_path=$APK_OUT" >> $GITHUB_OUTPUT
-          echo "APK size: $(du -h $APK_OUT | cut -f1)"
-
-      # ─── Rename APK with version ──────────────────────────────────────────────
-      - name: Rename APK
+      # ─── Meta (tag/version) ───────────────────────────────────────────────────
+      - name: Set release metadata
         id: meta
         run: |
           TAG="${{ github.event.inputs.tag }}"
           if [ -z "$TAG" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          if [ -z "$TAG" ]; then
+          elif [ -n "$TAG" ]; then
+            :  # use dispatch input
+          else
             TAG="v$(cat package.json | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])')"
           fi
-
-          PROFILE="${{ env.BUILD_TYPE }}"
-          NEW_APK="tts_ui-$TAG-$PROFILE.apk"
-          cp "${{ env.APK_OUTPUT }}" "$NEW_APK"
-          echo "Final APK: $NEW_APK"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "apk_name=$NEW_APK" >> $GITHUB_OUTPUT
-          echo "release_title=TTS UI $TAG ($PROFILE)" >> $GITHUB_OUTPUT
+          echo "apk_name=tts_ui-$TAG-android.apk" >> $GITHUB_OUTPUT
+          echo "release_title=TTS UI $TAG" >> $GITHUB_OUTPUT
+          echo "Using tag: $TAG"
 
-      # ─── Upload APK artifact ──────────────────────────────────────────────────
+      # ─── Upload artifact ──────────────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: tts_ui-android-apk
-          path: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 30
 
-      # ─── Create GitHub Release ───────────────────────────────────────────────
+      # ─── GitHub Release ───────────────────────────────────────────────────────
       - name: Create GitHub Release
         if: steps.meta.outputs.tag != ''
-        id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -225,16 +134,13 @@ jobs:
           body: |
             ## TTS UI — Android APK
 
-            **Build type:** `${{ env.BUILD_TYPE }}`
+            **Profile:** `${{ env.EAS_PROFILE }}`
             **Commit:** `${{ github.sha }}`
-            **Generated by:** GitHub Actions (local Android SDK)
-
-            ### What's in this release
-            Android APK built directly in GitHub Actions runners — no cloud build service required.
+            **Built by:** EAS local build (GitHub Actions)
 
             Download the APK below and install it on your Android device.
-          files: ${{ steps.meta.outputs.apk_name }}
+          files: ${{ steps.apk.outputs.apk_path }}
           draft: false
-          prerelease: ${{ env.BUILD_TYPE == 'debug' }}
+          prerelease: ${{ env.EAS_PROFILE == 'preview' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
