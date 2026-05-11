@@ -25,6 +25,8 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -188,7 +190,7 @@ jobs:
             Android APK built directly in GitHub Actions runners — no cloud build service required.
 
             Download the APK below and install it on your Android device.
-          artifacts: ${{ steps.meta.outputs.apk_name }}
+          files: ${{ steps.meta.outputs.apk_name }}
           draft: false
           prerelease: ${{ env.BUILD_TYPE == 'debug' }}
         env:
